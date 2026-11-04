@@ -134,6 +134,8 @@ pub(super) fn rarity(choice: Choice, run: &Run) -> Rarity {
         },
         Choice::Heal => Rarity::Common,
         Choice::Evolution(_) => Rarity::Legendary,
+        Choice::Specialization(_) => Rarity::Legendary,
+        Choice::Minion(_) => Rarity::Epic,
     }
 }
 

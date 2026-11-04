@@ -109,6 +109,13 @@ fn apply_upgrade_step(run: &mut Run, rng: &mut Rng) {
             Choice::Evolution(evo) => {
                 run.evolved.push(evo.evolved_name);
             }
+            Choice::Specialization(_) => {}
+            Choice::Minion(m) => {
+                if !run.minions.contains(&m.kind) {
+                    run.minions.push(m.kind);
+                    run.pending_minions.push(m.kind);
+                }
+            }
             Choice::Heal => unreachable!(),
         }
         run.version += 1;
@@ -189,6 +196,13 @@ pub(super) fn tick_chests(
                 apply_upgrade_step(&mut run, &mut rng);
             }
 
+            // Chance to discover a legendary artifact trinket
+            if (chest.card_count >= 3 || rng.f32() < 0.40) && run.trinkets.len() < super::trinkets::MAX_TRINKETS {
+                if let Some(trinket) = super::trinkets::roll_random_unowned(&run, &mut rng) {
+                    super::trinkets::award_trinket(&mut run, trinket, &mut sounds);
+                }
+            }
+
             let card_text = if chest.card_count == 1 {
                 "1 Upgrade".to_string()
             } else {
@@ -229,12 +243,15 @@ mod tests {
         let mut rng = Rng::default();
         let initial_abilities = run.abilities.len();
         let initial_passives = run.passives.len();
+        let initial_minions = run.minions.len();
 
         apply_upgrade_step(&mut run, &mut rng);
 
-        // Either an ability or passive was added
+        // Either an ability, passive, or minion companion was added
         assert!(
-            run.abilities.len() > initial_abilities || run.passives.len() > initial_passives
+            run.abilities.len() > initial_abilities
+                || run.passives.len() > initial_passives
+                || run.minions.len() > initial_minions
         );
         assert!(run.version > 0);
     }

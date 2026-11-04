@@ -10,6 +10,7 @@ mod auto;
 pub mod breakables;
 mod cards;
 pub(crate) mod chests;
+pub mod combo;
 mod data;
 mod enemies;
 pub mod events;
@@ -22,11 +23,14 @@ mod hero;
 mod hud;
 mod menu;
 mod minimap;
+pub mod minions;
 mod mobility;
 pub(crate) mod save;
 mod shrines;
+pub mod specs;
 mod telegraphs;
 pub(super) mod traits;
+pub mod trinkets;
 pub(crate) mod ultimates;
 mod units;
 
@@ -106,12 +110,17 @@ impl Plugin for SurvivorsPlugin {
                         breakables::collect_powerups,
                     ),
                     (
+                        combo::tick_combo,
+                        trinkets::tick_trinkets,
+                        minions::tick_minions,
                         breakables::vacuum_magnet_gems,
                         events::tick_world_events,
                         traits::tick_racial_traits,
                         abilities::cast_abilities,
                         evolutions::tick_evolutions,
                         ultimates::tick_ultimates,
+                    ),
+                    (
                         abilities::tick_areas,
                         abilities::apply_hits,
                         enemies::tick_marks,
@@ -163,6 +172,8 @@ impl Plugin for SurvivorsPlugin {
                             hud::refresh_blood_moon,
                             hud::refresh_critical_vignette,
                             hud::refresh_achievement_toast,
+                            hud::refresh_combo_hud,
+                            hud::refresh_trinkets_hud,
                             hud::refresh_shrine_buff,
                             hud::refresh_mobility,
                             hud::refresh_draft_buttons,
@@ -189,7 +200,15 @@ impl Plugin for SurvivorsPlugin {
                     .chain()
                     .after(hud::show_panels),
             )
-            .add_systems(OnEnter(Phase::Playing), (unpause, shrines::spawn_shrines, breakables::spawn_breakables))
+            .add_systems(
+                OnEnter(Phase::Playing),
+                (
+                    unpause,
+                    shrines::spawn_shrines,
+                    breakables::spawn_breakables,
+                    minions::setup_starting_companions,
+                ),
+            )
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
             .add_systems(OnEnter(Phase::GameOver), (unpause, record_game_over))
@@ -459,6 +478,11 @@ pub(super) struct Run {
     pub ultimate_charge: f32,
     pub ultimate_active: Option<(ultimates::UltimateKind, f32)>,
     pub affixes: data::ChallengeAffixes,
+    pub combo: combo::ComboState,
+    pub trinkets: Vec<trinkets::TrinketInstance>,
+    pub spec: Option<specs::SpecKind>,
+    pub minions: Vec<minions::MinionKind>,
+    pub pending_minions: Vec<minions::MinionKind>,
 }
 
 impl Default for Run {
@@ -509,6 +533,11 @@ impl Default for Run {
             ultimate_charge: 0.0,
             ultimate_active: None,
             affixes: data::ChallengeAffixes::default(),
+            combo: combo::ComboState::default(),
+            trinkets: Vec::new(),
+            spec: None,
+            minions: Vec::new(),
+            pending_minions: Vec::new(),
         }
     }
 }
@@ -595,6 +624,29 @@ impl Run {
         if self.affixes.midas_curse {
             s.gold_bonus *= 2.0;
         }
+
+        // Combo momentum scaling
+        let combo_spd = (self.combo.count as f32 * 0.0015).min(0.40);
+        s.speed *= 1.0 + combo_spd;
+        let combo_xp = (self.combo.count as f32 * 0.003).min(0.75);
+        s.xp_bonus += combo_xp;
+
+        // Class Specialization bonuses
+        if let Some(spec) = self.spec {
+            specs::apply_spec_stats(spec, &mut s);
+        }
+
+        // Trinket passive bonuses
+        for t in &self.trinkets {
+            if t.kind == trinkets::TrinketKind::TalismanOfEphemeralPower && t.active_timer > 0.0 {
+                s.might += 0.80;
+                s.haste = (s.haste + 0.80).min(0.95);
+            }
+            if t.kind == trinkets::TrinketKind::BlackDiamond {
+                s.might += t.stacks as f32 * 0.01;
+            }
+        }
+
         traits::race_trait(self.race).apply_stats(&mut s, self);
         s
     }

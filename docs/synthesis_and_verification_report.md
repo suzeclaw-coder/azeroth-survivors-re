@@ -319,4 +319,75 @@ flowchart TD
 - Release WebAssembly bundle packaged into [`web/dist/wenilla_bg.wasm`](file:///home/ubuntu/azeroth-survivors-re/web/dist/wenilla_bg.wasm) (`78.8 MB`, brotli `15.7 MB`).
 - Service `azeroth-survivors.service` active and verified with HTTP 200 OK at `http://127.0.0.1:8095` and Tailscale.
 
+---
+
+## 9. Phase 6 Gameplay Advancements
+
+| Feature | Primary Files | Status |
+| :--- | :--- | :--- |
+| **Combo Momentum & Killing Spree Multipliers** | [`combo.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/combo.rs), [`abilities.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/abilities.rs), [`hud.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/hud.rs) | **Implemented & Verified** |
+| **Legendary Artifact Trinkets (3-Slot Relic Bar)** | [`trinkets.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/trinkets.rs), [`chests.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/chests.rs), [`hud.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/hud.rs) | **Implemented & Verified** |
+| **Class Specialization Divergence at Level 10** | [`specs.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/specs.rs), [`hud.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/hud.rs), [`mod.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/mod.rs) | **Implemented & Verified** |
+| **Combat Companion Minions & Engineering Pets** | [`minions.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/minions.rs), [`cards.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/cards.rs), [`hud.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/hud.rs) | **Implemented & Verified** |
+
+### 9.1 Option 1: Legendary Artifact Trinkets & 3-Slot Relic Bar
+1. **Six Iconic WoW Trinkets**:
+   - Implemented in [`trinkets.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/trinkets.rs):
+     - **Talisman of Ephemeral Power**: Periodic surge every 30s granting +80% Might and Haste for 8s.
+     - **Insignia of the Grand Marshal / High Warlord**: CC break & 4.0s full damage immunity triggering on critical hits taken (90s cooldown).
+     - **Shard of the Scale**: Permanent +10% lifesteal leeching life on every ability damage hit.
+     - **Zulian Tiger Claw**: 15% chance on hit to rend target for 120 bleed damage over 4s.
+     - **Pristine Black Diamond**: Hoarder's relic giving +1.5% Area and +2 Max HP per 100 gold collected (up to +30% / +40 HP).
+     - **Heart of Hakkar**: Blood plague pulses every 15s dealing 150 shadow damage to all nearby foes.
+2. **Interactive 3-Socket Relic HUD**:
+   - In [`hud.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/hud.rs), a dedicated 3-socket horizontal bottom-left relic bar rendered with golden borders and active cooldown timers.
+   - Trinkets drop from Bosses (15% chance) and Major Chests (40% / guaranteed on major chests).
+
+### 9.2 Option 2: Combat Companion Minions & Engineering Combat Pets
+1. **Five Faithful Summons**:
+   - Implemented in [`minions.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/minions.rs):
+     - **Ironforge Wolf**: Leashed beast chasing down and biting nearby foes for 45 physical damage. (Hunter starting pet).
+     - **Fiery Imp**: Shoulder-hovering demon firing rapid Firebolts for 60 fire damage. (Warlock starting pet).
+     - **Water Elemental**: Glacial summon casting periodic radial Frost Novas freezing enemies within 6.5 yards.
+     - **Clockwork Bombling**: Engineering pet charging dense enemy packs and detonating for 320 fire damage.
+     - **Gyrocopter Harvester**: Autonomous aerial scout orbiting the arena and vacuuming remote XP gems.
+2. **Drafting & Automatic Leash AI**:
+   - Available as Epic card offerings during leveling drafts or chest upgrades.
+   - Dynamic 3D model positioning with automatic ground height snapping.
+
+### 9.3 Option 3: Class Specialization Choice at Level 10 (Talent Spec Divergence)
+1. **18 Class Specializations (2 per class for all 9 classes)**:
+   - Implemented in [`specs.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/specs.rs):
+     - **Warrior**: *Arms* (Colossus Smash: +35% Might, +20% Area) vs *Fury* (Bloodthirst: +40% Haste, +15% Move Speed).
+     - **Paladin**: *Retribution* (Vengeance: +30% Might, +15% Crit) vs *Protection* (Aegis: +35% Armor, +60 Max HP).
+     - **Hunter**: *Marksmanship* (Trueshot: +25% Projectile Speed, +20% Crit) vs *Beast Mastery* (Ferocity: +35% Pet Dmg, +15% Haste).
+     - **Rogue**: *Assassination* (Deadly Poisons: +30% Bleed/Burn Dmg, +15% Crit) vs *Combat* (Adrenaline: +35% Haste, +20% Move Speed).
+     - **Priest**: *Shadow* (Darkness: +35% Might, +10% Lifesteal) vs *Holy* (Divine Aegis: +50 Max HP, +25% Recovery).
+     - **Shaman**: *Elemental* (Call of Thunder: +30% Area, +20% Haste) vs *Enhancement* (Stormstrike: +35% Might, +15% Crit).
+     - **Mage**: *Fire* (Ignite: +40% Area, +15% Crit) vs *Frost* (Shatter: +30% Chill Slow, +25% Haste).
+     - **Warlock**: *Destruction* (Cataclysm: +40% Might, +15% Area) vs *Affliction* (Siphon Life: +15% Lifesteal, +20% Haste).
+     - **Druid**: *Balance* (Eclipse: +30% Might, +25% Area) vs *Feral* (Predatory Instincts: +25% Move Speed, +30% Crit).
+2. **Exclusive Milestone Draft**:
+   - At Level 10, the draft card selection specifically offers the hero's two class talent specializations.
+
+### 9.4 Option 4: Combo Momentum System & Arcade "Killing Spree" Multipliers
+1. **Streak Tiers & Decaying Timer**:
+   - Implemented in [`combo.rs`](file:///home/ubuntu/azeroth-survivors-re/crates/benilla-app/src/survivors/combo.rs):
+     - Tier 1: 25 Kills - **Killing Spree** (+10% Move Speed, +15% XP)
+     - Tier 2: 50 Kills - **Rampage** (+18% Move Speed, +30% XP)
+     - Tier 3: 100 Kills - **Dominating** (+26% Move Speed, +50% XP)
+     - Tier 4: 200 Kills - **Unstoppable** (+35% Move Speed, +75% XP)
+     - Tier 5: 350+ Kills - **Godlike** (+45% Move Speed, +100% XP)
+   - 3.5s decaying timer refreshed on every kill.
+2. **Cashout Bonus & Dynamic HUD Indicator**:
+   - Top-center streak banner with shrinking yellow momentum timer bar.
+   - When the combo decays, a gold cashout bonus (`count / 5` gold, capped at 150g) is awarded with floating gold text and gold chime sound.
+
+### 9.5 Phase 6 Verification Results
+- 36 unit tests pass (`36 passed; 0 failed` in 0.08s).
+- `cargo check -p benilla-app` clean with 0 warnings.
+- Release WebAssembly bundle packaged into [`web/dist/wenilla_bg.wasm`](file:///home/ubuntu/azeroth-survivors-re/web/dist/wenilla_bg.wasm) (`78.8 MB`, brotli `15.7 MB`).
+- Service `azeroth-survivors.service` active and verified with HTTP 200 OK at `http://127.0.0.1:8095` and Tailscale (`https://test-vm.tail68eadd.ts.net:10013`).
+
+
 

@@ -85,6 +85,16 @@ pub(super) struct BloodMoonOverlay;
 #[derive(Component)]
 pub(super) struct CriticalVignette;
 #[derive(Component)]
+pub(super) struct ComboRoot;
+#[derive(Component)]
+pub(super) struct ComboText;
+#[derive(Component)]
+pub(super) struct ComboTimerFill;
+#[derive(Component)]
+pub(super) struct TrinketSlotRoot;
+#[derive(Component)]
+pub(super) struct TrinketSlotIcon(pub(super) usize);
+#[derive(Component)]
 pub(super) struct AbilityRow;
 #[derive(Component)]
 pub(super) struct PassiveRow;
@@ -244,6 +254,8 @@ pub(super) enum Choice {
     UpPassive(usize),
     Heal,
     Evolution(&'static super::evolutions::EvolutionDef),
+    Specialization(&'static super::specs::SpecDef),
+    Minion(&'static super::minions::MinionDef),
 }
 
 /// The level-up cards on offer.
@@ -512,6 +524,117 @@ pub(super) fn setup_hud(
                     },
                     TextLayout::new(Justify::Right, LineBreak::NoWrap),
                 ));
+            });
+
+            // Combo Momentum Streak Display (Top Right below Toast)
+            root.spawn((
+                ComboRoot,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(78.0),
+                    right: Val::Px(24.0),
+                    width: Val::Px(180.0),
+                    height: Val::Px(42.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(Val::Px(1.5)),
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::srgb(1.0, 0.6, 0.1)),
+                BackgroundColor(Color::srgba(0.08, 0.05, 0.02, 0.90)),
+                GlobalZIndex(420),
+                Visibility::Hidden,
+            ))
+            .with_children(|combo| {
+                combo.spawn((
+                    ComboText,
+                    Text::new("0x STREAK!"),
+                    TextFont {
+                        font: f.clone(),
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(1.0, 0.75, 0.1)),
+                    TextShadow {
+                        offset: Vec2::new(1.0, 1.0),
+                        color: Color::BLACK,
+                    },
+                    TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                ));
+                // Decaying timer bar
+                combo
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(4.0),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            border: UiRect::all(Val::Px(0.5)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::srgb(0.5, 0.3, 0.1)),
+                        BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.8)),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            ComboTimerFill,
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(1.0, 0.45, 0.05)),
+                        ));
+                    });
+            });
+
+            // 3-Slot Legendary Artifact Trinkets Bar (Bottom Right)
+            root.spawn((
+                TrinketSlotRoot,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(24.0),
+                    right: Val::Px(20.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                GlobalZIndex(410),
+            ))
+            .with_children(|row| {
+                for i in 0..3 {
+                    row.spawn((
+                        Node {
+                            width: Val::Px(38.0),
+                            height: Val::Px(38.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BorderColor::all(Color::srgb(0.55, 0.45, 0.25)),
+                        BackgroundColor(Color::srgba(0.08, 0.08, 0.08, 0.9)),
+                    ))
+                    .with_children(|slot| {
+                        slot.spawn((
+                            TrinketSlotIcon(i),
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            ImageNode {
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.0),
+                                ..default()
+                            },
+                            SpellIcon(0),
+                        ));
+                    });
+                }
             });
 
             // `MainMenuExpBar`, 1024×13 at the bottom centre. The reference stacks it on the
@@ -1563,6 +1686,14 @@ pub(super) fn start_run(
 }
 
 pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
+    // Level 10 Class Specialization Selection: exclusive 2-spec choice
+    if run.level >= 10 && run.spec.is_none() {
+        let specs = super::specs::specs_for_class_id(run.class.id);
+        if !specs.is_empty() {
+            return specs.into_iter().map(Choice::Specialization).collect();
+        }
+    }
+
     let mut pool: Vec<(Choice, f32)> = Vec::new();
     let is_banished = |name: &str, key: &str| -> bool {
         run.banished.iter().any(|b| {
@@ -1572,6 +1703,13 @@ pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
                 || key.replace('_', " ").eq_ignore_ascii_case(b)
         })
     };
+
+    // Companion summon offerings
+    for m in super::minions::MINIONS {
+        if !run.minions.contains(&m.kind) && !is_banished(m.name, m.name) {
+            pool.push((Choice::Minion(m), 0.7));
+        }
+    }
 
     for o in &run.abilities {
         if !is_banished(o.def.name, o.def.key) {
@@ -1665,6 +1803,15 @@ pub(super) fn pick(
             run.evolved.push(evo.evolved_name);
             run.banner = Some((format!("Evolution Unlocked: {}!", evo.evolved_name), 3.5));
         }
+        Choice::Specialization(spec) => {
+            run.spec = Some(spec.kind);
+            run.banner = Some((format!("Specialization Chosen: {}!", spec.name), 4.0));
+        }
+        Choice::Minion(m) => {
+            run.minions.push(m.kind);
+            run.pending_minions.push(m.kind);
+            run.banner = Some((format!("Companion Summoned: {}!", m.name), 3.5));
+        }
     }
     run.version += 1;
     run.pending_levels = run.pending_levels.saturating_sub(1);
@@ -1756,6 +1903,12 @@ pub(super) fn banish(
             let n = evo.evolved_name.to_string();
             run.banished.push(n.clone());
             run.banished.push(evo.base_ability.to_string());
+            n
+        }
+        Choice::Specialization(_) => String::new(),
+        Choice::Minion(m) => {
+            let n = m.name.to_string();
+            run.banished.push(n.clone());
             n
         }
     };
@@ -2016,6 +2169,22 @@ pub(super) fn describe_card(
             tag: "Evolution".into(),
             tag_color: cards::LEGENDARY,
             desc: evo.description.into(),
+            ranks: None,
+        },
+        Choice::Specialization(spec) => CardText {
+            spell: spec.spell,
+            name: spec.name.into(),
+            tag: spec.tag.into(),
+            tag_color: cards::LEGENDARY,
+            desc: spec.desc.into(),
+            ranks: None,
+        },
+        Choice::Minion(m) => CardText {
+            spell: m.spell,
+            name: m.name.into(),
+            tag: "Companion".into(),
+            tag_color: cards::EPIC,
+            desc: m.desc.into(),
             ranks: None,
         },
     }
@@ -2500,6 +2669,70 @@ pub(super) fn refresh_achievement_toast(
         }
     } else if *vis != Visibility::Hidden {
         *vis = Visibility::Hidden;
+    }
+}
+
+/// Refreshes the Kill Combo streak HUD display and decaying timer bar.
+pub(super) fn refresh_combo_hud(
+    run: Res<Run>,
+    mut root_q: Query<&mut Visibility, With<ComboRoot>>,
+    mut text_q: Query<&mut Text, With<ComboText>>,
+    mut fill_q: Query<&mut Node, With<ComboTimerFill>>,
+) {
+    let Ok(mut vis) = root_q.single_mut() else { return };
+    if run.combo.count > 0 && run.dead_t.is_none() {
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
+        let streak_text = format!("{}x STREAK!", run.combo.count);
+        for mut t in &mut text_q {
+            if **t != streak_text {
+                **t = streak_text.clone();
+            }
+        }
+        let pct = (run.combo.timer / super::combo::COMBO_MAX_TIMER * 100.0).clamp(0.0, 100.0);
+        for mut node in &mut fill_q {
+            let w = Val::Percent(pct);
+            if node.width != w {
+                node.width = w;
+            }
+        }
+    } else if *vis != Visibility::Hidden {
+        *vis = Visibility::Hidden;
+    }
+}
+
+/// Refreshes the 3-Slot Legendary Artifact Trinkets bar.
+pub(super) fn refresh_trinkets_hud(
+    mut commands: Commands,
+    run: Res<Run>,
+    mut icons: Query<(Entity, &TrinketSlotIcon, &mut SpellIcon, &mut ImageNode)>,
+) {
+    for (e, slot, mut spell_icon, mut image) in &mut icons {
+        if let Some(t) = run.trinkets.get(slot.0) {
+            let def = t.def();
+            if spell_icon.0 != def.spell {
+                spell_icon.0 = def.spell;
+                commands.entity(e).remove::<IconDone>();
+            }
+            let target_color = if t.active_timer > 0.0 {
+                Color::WHITE
+            } else if t.cd_timer > 0.0 {
+                Color::srgba(0.4, 0.4, 0.4, 0.6)
+            } else {
+                Color::srgba(1.0, 1.0, 1.0, 0.95)
+            };
+            if image.color != target_color {
+                image.color = target_color;
+            }
+        } else {
+            if spell_icon.0 != 0 {
+                spell_icon.0 = 0;
+            }
+            if image.color != Color::NONE {
+                image.color = Color::NONE;
+            }
+        }
     }
 }
 
@@ -4040,6 +4273,10 @@ mod tests {
                     Choice::Evolution(evo) => {
                         assert_ne!(evo.evolved_name, banished_name);
                         assert_ne!(evo.base_ability, banished_name);
+                    }
+                    Choice::Specialization(_) => {}
+                    Choice::Minion(m) => {
+                        assert_ne!(m.name, banished_name);
                     }
                 }
             }

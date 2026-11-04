@@ -888,6 +888,8 @@ pub(super) fn apply_hits(
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
     mut combat_text: MessageWriter<CombatTextMsg>,
+    mut sounds: MessageWriter<crate::sound::GlueSound>,
+    mut rng: ResMut<Rng>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
@@ -924,7 +926,15 @@ pub(super) fn apply_hits(
     }
 
     let mut kill =
-        |commands: &mut Commands, run: &mut Run, e: Entity, pos: Vec3, en: &mut Enemy, spell: u32, key: &'static str| {
+        |commands: &mut Commands,
+         run: &mut Run,
+         sounds: &mut MessageWriter<crate::sound::GlueSound>,
+         rng: &mut ResMut<Rng>,
+         e: Entity,
+         pos: Vec3,
+         en: &mut Enemy,
+         spell: u32,
+         key: &'static str| {
             en.dead = true;
             en.hp = 0.0;
             en.dots.clear();
@@ -942,8 +952,15 @@ pub(super) fn apply_hits(
             }
             run.kills += 1;
             run.meter.record_kill(spell, key);
+            super::combo::record_kill(run, sounds);
+
             if en.boss {
                 run.banner = Some((format!("{} is slain!", en.def.name), 3.0));
+                if run.trinkets.len() < super::trinkets::MAX_TRINKETS {
+                    if let Some(trinket) = super::trinkets::roll_random_unowned(run, rng) {
+                        super::trinkets::award_trinket(run, trinket, sounds);
+                    }
+                }
             }
         };
 
@@ -995,11 +1012,14 @@ pub(super) fn apply_hits(
                     impact: 11366,
                 });
             }
-            let drain_frac = match h.effect {
+            let mut drain_frac = match h.effect {
                 Effect::Drain(frac) => frac,
                 _ if run.race == 5 && traits::is_bleeding_or_burning(&en) => 0.10,
                 _ => 0.0,
             };
+            if run.trinkets.iter().any(|t| t.kind == super::trinkets::TrinketKind::ShardOfTheScale) {
+                drain_frac += 0.10;
+            }
             if drain_frac > 0.0 {
                 let max = run.stats().max_hp;
                 let heal = (dmg * drain_frac).min(max - run.hp);
@@ -1048,7 +1068,7 @@ pub(super) fn apply_hits(
             marks.add(h.mark, h.mark_dur);
         }
         if en.hp <= 0.0 {
-            kill(&mut commands, &mut run, e, tf.translation, &mut en, h.spell, h.key);
+            kill(&mut commands, &mut run, &mut sounds, &mut rng, e, tf.translation, &mut en, h.spell, h.key);
             units::kill_unit(&mut store);
             marks.clear();
         }
@@ -1084,7 +1104,7 @@ pub(super) fn apply_hits(
                 kind: CombatTextKind::from_key(last_dot.1),
             });
             if en.hp <= 0.0 {
-                kill(&mut commands, &mut run, e, tf.translation, &mut en, last_dot.0, last_dot.1);
+                kill(&mut commands, &mut run, &mut sounds, &mut rng, e, tf.translation, &mut en, last_dot.0, last_dot.1);
                 units::kill_unit(&mut store);
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);

@@ -772,6 +772,11 @@ pub(super) fn collect_gems(
                         (gold as f32 * stats.growth * stats.gold_bonus).round().max(1.0) as u64;
                     run.gold += scaled_gold;
                     fx.number(hero_e, scaled_gold as f32, false, 0xFFFF_D700);
+                    for t in &mut run.trinkets {
+                        if t.kind == super::trinkets::TrinketKind::BlackDiamond {
+                            t.stacks = (t.stacks + 1).min(100);
+                        }
+                    }
                 }
             }
             commands.entity(e).despawn();
