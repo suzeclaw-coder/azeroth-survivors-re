@@ -448,7 +448,7 @@ pub(crate) enum GlueBtnKind {
 
 impl GlueBtnKind {
     /// `(font size, caption offset)`, the offset in the reference's anchor space, y up.
-    fn caption(self) -> (f32, Vec2) {
+    pub(crate) fn caption(self) -> (f32, Vec2) {
         match self {
             Self::Normal => (15.0, Vec2::new(-3.0, 3.0)),
             Self::Small => (12.0, Vec2::new(0.0, 3.0)),
@@ -456,7 +456,7 @@ impl GlueBtnKind {
         }
     }
 
-    fn tex_coords(self) -> Option<BtnTexCoords> {
+    pub(crate) fn tex_coords(self) -> Option<BtnTexCoords> {
         match self {
             Self::List => Some(BtnTexCoords([0.025, 0.535, 0.0, 0.75])),
             _ => None,

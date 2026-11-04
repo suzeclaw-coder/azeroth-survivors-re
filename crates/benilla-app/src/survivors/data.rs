@@ -75,6 +75,7 @@ pub(crate) enum Effect {
 
 pub(crate) struct AbilityDef {
     pub key: &'static str,
+    pub name: &'static str,
     pub spell: u32,
     pub kind: Kind,
     /// Direct damage; per tick for areas and pulses; absorb, heal or reflect for the self kinds.
@@ -100,6 +101,7 @@ pub(crate) struct AbilityDef {
 const fn ab(key: &'static str, spell: u32, kind: Kind) -> AbilityDef {
     AbilityDef {
         key,
+        name: key,
         spell,
         kind,
         damage: 0.0,
@@ -237,6 +239,17 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
             duration: 6.0,
             cooldown: 6.0,
             range: 30.0
+        }
+    ),
+    ability!(
+        "blink",
+        1953,
+        Nova {
+            damage: 25.0,
+            cooldown: 8.0,
+            radius: 8.0,
+            effect: Effect::Root(2.0),
+            mark: 122
         }
     ),
     // --- Warrior ---
@@ -885,7 +898,7 @@ pub(crate) fn ability(key: &str) -> &'static AbilityDef {
         .unwrap_or_else(|| panic!("survivors: no ability {key:?}"))
 }
 
-pub(crate) const MAX_ABILITY_LEVEL: u8 = 8;
+pub(crate) const MAX_ABILITY_LEVEL: u8 = 5;
 pub(crate) const MAX_PASSIVE_LEVEL: u8 = 5;
 pub(crate) const MAX_ABILITIES: usize = 6;
 pub(crate) const MAX_PASSIVES: usize = 6;
@@ -1141,6 +1154,7 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "cone_of_cold",
             "blast_wave",
             "pyroblast",
+            "blink",
         ],
         looks: &[
             1294, 1470, 1484, 1592, 1600, 2134, 2135, 2644, 2657, 2810, 3108, 3109, 3292, 3293,
@@ -1199,6 +1213,23 @@ pub(crate) static CLASSES: &[ClassDef] = &[
     },
 ];
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TelegraphShape {
+    Circle { radius: f32 },
+    Cone { angle_rad: f32, range: f32 },
+    Line { length: f32, width: f32 },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BossAbilityDef {
+    pub name: &'static str,
+    pub shape: TelegraphShape,
+    pub windup: f32,
+    pub damage: f32,
+    pub spell_id: u32,
+    pub cooldown: f32,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct EnemyDef {
     pub name: &'static str,
@@ -1211,6 +1242,7 @@ pub(crate) struct EnemyDef {
     pub level: u32,
     /// A great beast, which takes more room in the crowd.
     pub big: bool,
+    pub abilities: &'static [BossAbilityDef],
 }
 
 const fn en(
@@ -1232,6 +1264,7 @@ const fn en(
         xp,
         level,
         big: false,
+        abilities: &[],
     }
 }
 
@@ -1281,29 +1314,447 @@ const fn huge(def: EnemyDef) -> EnemyDef {
 pub(crate) static BOSSES: &[EnemyDef] = &[
     EnemyDef {
         scale: 1.6,
+        abilities: &[BossAbilityDef {
+            name: "Savage Roar",
+            shape: TelegraphShape::Circle { radius: 7.0 },
+            windup: 1.8,
+            damage: 35.0,
+            spell_id: 13323,
+            cooldown: 8.0,
+        }],
         ..en("Echeyakee", 1934, 700.0, 5.2, 20.0, 60, 16)
     },
     EnemyDef {
         scale: 1.6,
+        abilities: &[BossAbilityDef {
+            name: "Pounce Impact",
+            shape: TelegraphShape::Circle { radius: 6.0 },
+            windup: 1.5,
+            damage: 50.0,
+            spell_id: 674,
+            cooldown: 7.0,
+        }],
         ..en("Takk the Leaper", 1337, 1800.0, 5.4, 32.0, 120, 19)
     },
     EnemyDef {
         scale: 1.7,
+        abilities: &[BossAbilityDef {
+            name: "Earth Slam",
+            shape: TelegraphShape::Line {
+                length: 20.0,
+                width: 4.5,
+            },
+            windup: 2.0,
+            damage: 70.0,
+            spell_id: 8147,
+            cooldown: 9.0,
+        }],
         ..en("Lakota'mani", 1241, 4200.0, 4.0, 45.0, 200, 22)
     },
     EnemyDef {
         scale: 1.7,
+        abilities: &[BossAbilityDef {
+            name: "Pridelord's Cleave",
+            shape: TelegraphShape::Cone {
+                angle_rad: 1.6,
+                range: 12.0,
+            },
+            windup: 1.6,
+            damage: 85.0,
+            spell_id: 15496,
+            cooldown: 7.5,
+        }],
         ..en("Humar the Pridelord", 4424, 7000.0, 5.6, 55.0, 300, 26)
     },
     EnemyDef {
         scale: 1.8,
+        abilities: &[BossAbilityDef {
+            name: "Blood Frenzy Rampage",
+            shape: TelegraphShape::Circle { radius: 10.0 },
+            windup: 2.2,
+            damage: 110.0,
+            spell_id: 8269,
+            cooldown: 10.0,
+        }],
         ..en("Agathelos the Raging", 2450, 12000.0, 5.0, 70.0, 400, 33)
     },
     EnemyDef {
         scale: 1.8,
+        abilities: &[BossAbilityDef {
+            name: "Bloodmark Shockwave",
+            shape: TelegraphShape::Line {
+                length: 24.0,
+                width: 5.5,
+            },
+            windup: 2.0,
+            damage: 140.0,
+            spell_id: 16046,
+            cooldown: 8.0,
+        }],
         ..en("Hezrul Bloodmark", 9448, 20000.0, 4.8, 90.0, 500, 33)
     },
 ];
+
+static KAZZAK_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Shadow Bolt Frenzy",
+        shape: TelegraphShape::Line {
+            length: 28.0,
+            width: 6.0,
+        },
+        windup: 1.8,
+        damage: 180.0,
+        spell_id: 21056,
+        cooldown: 7.0,
+    },
+    BossAbilityDef {
+        name: "Twisted Reflection",
+        shape: TelegraphShape::Circle { radius: 12.0 },
+        windup: 2.2,
+        damage: 200.0,
+        spell_id: 21063,
+        cooldown: 11.0,
+    },
+];
+
+static TEREMUS_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Flamespit Blast",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.6,
+            range: 20.0,
+        },
+        windup: 2.0,
+        damage: 130.0,
+        spell_id: 15570,
+        cooldown: 8.0,
+    },
+    BossAbilityDef {
+        name: "Tail Sweep Wave",
+        shape: TelegraphShape::Line {
+            length: 22.0,
+            width: 5.5,
+        },
+        windup: 1.8,
+        damage: 140.0,
+        spell_id: 15847,
+        cooldown: 9.0,
+    },
+];
+
+static KURINNAXX_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Sand Trap",
+        shape: TelegraphShape::Circle { radius: 6.5 },
+        windup: 1.5,
+        damage: 90.0,
+        spell_id: 25648,
+        cooldown: 6.5,
+    },
+    BossAbilityDef {
+        name: "Sweeping Pincer",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.7,
+            range: 14.0,
+        },
+        windup: 1.6,
+        damage: 110.0,
+        spell_id: 25646,
+        cooldown: 8.0,
+    },
+];
+
+static RAJAXX_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Thundering Cleave",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.9,
+            range: 15.0,
+        },
+        windup: 1.7,
+        damage: 125.0,
+        spell_id: 25599,
+        cooldown: 7.5,
+    },
+    BossAbilityDef {
+        name: "Shield Slam Wave",
+        shape: TelegraphShape::Line {
+            length: 22.0,
+            width: 5.0,
+        },
+        windup: 1.9,
+        damage: 140.0,
+        spell_id: 25598,
+        cooldown: 9.0,
+    },
+];
+
+static OSSIRIAN_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Tornado Cyclone",
+        shape: TelegraphShape::Circle { radius: 12.0 },
+        windup: 2.2,
+        damage: 210.0,
+        spell_id: 25189,
+        cooldown: 8.5,
+    },
+    BossAbilityDef {
+        name: "Enveloping Sandstorm",
+        shape: TelegraphShape::Line {
+            length: 30.0,
+            width: 7.0,
+        },
+        windup: 2.0,
+        damage: 230.0,
+        spell_id: 25188,
+        cooldown: 10.0,
+    },
+];
+
+static MOAM_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Mana Fiend Eruption",
+    shape: TelegraphShape::Circle { radius: 9.0 },
+    windup: 2.0,
+    damage: 135.0,
+    spell_id: 25685,
+    cooldown: 8.0,
+}];
+
+static BURU_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Dismembering Charge",
+    shape: TelegraphShape::Line {
+        length: 24.0,
+        width: 5.5,
+    },
+    windup: 1.8,
+    damage: 160.0,
+    spell_id: 25698,
+    cooldown: 7.5,
+}];
+
+static HUHURAN_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Acid Spit Volley",
+    shape: TelegraphShape::Cone {
+        angle_rad: 1.6,
+        range: 18.0,
+    },
+    windup: 1.7,
+    damage: 175.0,
+    spell_id: 26050,
+    cooldown: 8.0,
+}];
+
+static HAKKAR_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Corrupted Blood Spill",
+        shape: TelegraphShape::Circle { radius: 13.0 },
+        windup: 2.2,
+        damage: 230.0,
+        spell_id: 24328,
+        cooldown: 9.0,
+    },
+    BossAbilityDef {
+        name: "Blood Siphon Cone",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.8,
+            range: 18.0,
+        },
+        windup: 1.9,
+        damage: 200.0,
+        spell_id: 24324,
+        cooldown: 8.0,
+    },
+];
+
+static MANDOKIR_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Decapitating Rush",
+    shape: TelegraphShape::Line {
+        length: 24.0,
+        width: 5.0,
+    },
+    windup: 1.8,
+    damage: 150.0,
+    spell_id: 24316,
+    cooldown: 8.0,
+}];
+
+static THEKAL_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Fist of the Tiger",
+    shape: TelegraphShape::Cone {
+        angle_rad: 1.6,
+        range: 16.0,
+    },
+    windup: 1.7,
+    damage: 165.0,
+    spell_id: 24261,
+    cooldown: 7.5,
+}];
+
+static JINDO_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Hexer's Lightning Whirl",
+    shape: TelegraphShape::Circle { radius: 10.0 },
+    windup: 2.0,
+    damage: 185.0,
+    spell_id: 24311,
+    cooldown: 8.5,
+}];
+
+static KELTHUZAD_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Shadow Fissure",
+        shape: TelegraphShape::Circle { radius: 12.0 },
+        windup: 2.2,
+        damage: 250.0,
+        spell_id: 27810,
+        cooldown: 8.0,
+    },
+    BossAbilityDef {
+        name: "Frost Breath Wave",
+        shape: TelegraphShape::Line {
+            length: 30.0,
+            width: 7.0,
+        },
+        windup: 2.0,
+        damage: 260.0,
+        spell_id: 27808,
+        cooldown: 10.0,
+    },
+];
+
+static PATCHWERK_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Hateful Cleave",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.8,
+            range: 15.0,
+        },
+        windup: 1.6,
+        damage: 190.0,
+        spell_id: 28308,
+        cooldown: 7.0,
+    },
+    BossAbilityDef {
+        name: "Slime Spray",
+        shape: TelegraphShape::Line {
+            length: 24.0,
+            width: 5.5,
+        },
+        windup: 1.8,
+        damage: 180.0,
+        spell_id: 28374,
+        cooldown: 9.0,
+    },
+];
+
+static THADDIUS_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Polarity Shockwave",
+    shape: TelegraphShape::Line {
+        length: 26.0,
+        width: 6.0,
+    },
+    windup: 2.0,
+    damage: 210.0,
+    spell_id: 28089,
+    cooldown: 8.5,
+}];
+
+static GLUTH_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Decimate Howl",
+    shape: TelegraphShape::Circle { radius: 11.0 },
+    windup: 2.0,
+    damage: 175.0,
+    spell_id: 28374,
+    cooldown: 8.5,
+}];
+
+static ANUBREKHAN_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Locust Swarm",
+    shape: TelegraphShape::Circle { radius: 8.5 },
+    windup: 1.8,
+    damage: 120.0,
+    spell_id: 28785,
+    cooldown: 7.5,
+}];
+
+static FAERLINA_ABILITIES: &[BossAbilityDef] = &[BossAbilityDef {
+    name: "Rain of Fire",
+    shape: TelegraphShape::Circle { radius: 9.5 },
+    windup: 1.9,
+    damage: 140.0,
+    spell_id: 11990,
+    cooldown: 8.0,
+}];
+
+static KING_MOSH_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Primeval Tremor",
+        shape: TelegraphShape::Line {
+            length: 26.0,
+            width: 6.0,
+        },
+        windup: 2.0,
+        damage: 220.0,
+        spell_id: 16046,
+        cooldown: 8.5,
+    },
+    BossAbilityDef {
+        name: "Terrifying Roar",
+        shape: TelegraphShape::Circle { radius: 11.0 },
+        windup: 1.8,
+        damage: 180.0,
+        spell_id: 8269,
+        cooldown: 10.0,
+    },
+];
+
+static HOGGER_ABILITIES: &[BossAbilityDef] = &[
+    BossAbilityDef {
+        name: "Gnoll War Cry",
+        shape: TelegraphShape::Cone {
+            angle_rad: 1.7,
+            range: 12.0,
+        },
+        windup: 1.5,
+        damage: 45.0,
+        spell_id: 15496,
+        cooldown: 7.0,
+    },
+    BossAbilityDef {
+        name: "Wild Flail",
+        shape: TelegraphShape::Circle { radius: 6.0 },
+        windup: 1.4,
+        damage: 40.0,
+        spell_id: 13323,
+        cooldown: 8.0,
+    },
+];
+
+pub(crate) fn boss_abilities_for(name: &str) -> &'static [BossAbilityDef] {
+    match name {
+        "Lord Kazzak" => KAZZAK_ABILITIES,
+        "Teremus the Devourer" => TEREMUS_ABILITIES,
+        "Kurinnaxx" => KURINNAXX_ABILITIES,
+        "General Rajaxx" => RAJAXX_ABILITIES,
+        "Ossirian the Unscarred" => OSSIRIAN_ABILITIES,
+        "Moam" => MOAM_ABILITIES,
+        "Buru the Gorger" => BURU_ABILITIES,
+        "Princess Huhuran" => HUHURAN_ABILITIES,
+        "Hakkar" => HAKKAR_ABILITIES,
+        "Bloodlord Mandokir" => MANDOKIR_ABILITIES,
+        "High Priest Thekal" => THEKAL_ABILITIES,
+        "Jin'do the Hexxer" => JINDO_ABILITIES,
+        "Kel'Thuzad" => KELTHUZAD_ABILITIES,
+        "Patchwerk" => PATCHWERK_ABILITIES,
+        "Thaddius" => THADDIUS_ABILITIES,
+        "Gluth" => GLUTH_ABILITIES,
+        "Anub'Rekhan" => ANUBREKHAN_ABILITIES,
+        "Grand Widow Faerlina" => FAERLINA_ABILITIES,
+        "King Mosh" => KING_MOSH_ABILITIES,
+        "Hogger" => HOGGER_ABILITIES,
+        _ => &[],
+    }
+}
+
 
 /// Survive this long to win.
 pub(crate) const VICTORY_SECS: f32 = 900.0;
@@ -1329,7 +1780,12 @@ pub(crate) fn wave_pool(elapsed: f32, tiers: usize) -> [usize; 3] {
 
 /// How many enemies the spawner keeps alive at a point in the run.
 pub(crate) fn target_alive(elapsed: f32) -> usize {
-    ((14.0 + progress(elapsed) * 225.0) as usize).min(220)
+    if elapsed <= VICTORY_SECS {
+        ((14.0 + progress(elapsed) * 225.0) as usize).min(220)
+    } else {
+        let extra = ((elapsed - VICTORY_SECS) / 30.0) as usize * 15;
+        ((220 + extra) as usize).min(320)
+    }
 }
 
 /// Enemy health grows on top of the tiers, so a late kill takes several spells.
@@ -1385,6 +1841,50 @@ const fn giant(name: &'static str, display: u32, level: u32, speed: f32, scale: 
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShrineKind {
+    Moonwell,
+    Swiftness,
+    Storm,
+    Greed,
+}
+
+impl ShrineKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ShrineKind::Moonwell => "Moonwell",
+            ShrineKind::Swiftness => "Swiftness Shrine",
+            ShrineKind::Storm => "Storm Shrine",
+            ShrineKind::Greed => "Greed Shrine",
+        }
+    }
+
+    pub fn buff_desc(&self) -> &'static str {
+        match self {
+            ShrineKind::Moonwell => "+15% HP Regen / sec",
+            ShrineKind::Swiftness => "+50% Speed & Instant Dash",
+            ShrineKind::Storm => "Chain Lightning Pulses",
+            ShrineKind::Greed => "4x Magnet & Gem Values",
+        }
+    }
+
+    /// GameObjectDisplayInfo ID and scale.
+    pub fn display_info(&self) -> (u32, f32) {
+        match self {
+            ShrineKind::Moonwell => (761, 1.2),  // Moonwell / basin
+            ShrineKind::Swiftness => (121, 1.5), // Shrine
+            ShrineKind::Storm => (105, 1.5),     // Altar
+            ShrineKind::Greed => (259, 1.8),     // Treasure Chest
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShrineDef {
+    pub kind: ShrineKind,
+    pub pos: [f32; 3],
+}
+
 /// Where a run is fought.
 pub(crate) struct MapDef {
     pub name: &'static str,
@@ -1398,6 +1898,7 @@ pub(crate) struct MapDef {
     pub leash: f32,
     /// The results screen's line on a win.
     pub victory: &'static str,
+    pub shrines: &'static [ShrineDef],
     /// Weakest first; empty for The Barrens, which keeps its hand-tuned [`ENEMIES`].
     foes: &'static [Foe],
     /// One every [`BOSS_EVERY_SECS`], in order; empty for The Barrens' [`BOSSES`].
@@ -1413,6 +1914,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-950.0, -2700.0, 92.0],
         leash: 150.0,
         victory: "The Barrens are yours.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-950.0, -2660.0, 92.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-910.0, -2700.0, 92.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-990.0, -2700.0, 92.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-950.0, -2740.0, 92.0] },
+        ],
         foes: &[],
         bosses: &[],
     },
@@ -1424,6 +1931,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-11840.0, -3197.0, -30.0],
         leash: 75.0,
         victory: "The Dark Portal stands silent.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-11840.0, -3162.0, -30.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-11805.0, -3197.0, -30.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-11875.0, -3197.0, -30.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-11840.0, -3232.0, -30.0] },
+        ],
         foes: &[
             foe("Starving Snickerfang", 8050, 45, 4.6, 1.0),
             foe("Snickerfang Hyena", 2714, 49, 5.0, 1.15),
@@ -1456,6 +1969,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-8180.0, 1536.0, 5.0],
         leash: 80.0,
         victory: "The Qiraji retreat behind the Scarab Wall.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-8180.0, 1571.0, 5.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-8145.0, 1536.0, 5.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-8215.0, 1536.0, 5.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-8180.0, 1501.0, 5.0] },
+        ],
         foes: &[
             foe("Sand Skitterer", 8014, 56, 5.0, 1.0),
             foe("Stonelash Scorpid", 15383, 55, 4.6, 1.6),
@@ -1494,6 +2013,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-7136.0, -1309.0, -184.0],
         leash: 32.0,
         victory: "Even King Mosh has fallen.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-7136.0, -1293.0, -184.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-7120.0, -1309.0, -184.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-7152.0, -1309.0, -184.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-7136.0, -1325.0, -184.0] },
+        ],
         foes: &[
             foe("Bloodpetal Lasher", 11634, 49, 3.6, 0.9),
             foe("Young Diemetradon", 8510, 48, 4.4, 0.55),
@@ -1533,6 +2058,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-13205.0, 272.0, 22.0],
         leash: 30.0,
         victory: "The arena roars your name.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-13205.0, 287.0, 22.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-13190.0, 272.0, 22.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-13220.0, 272.0, 22.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-13205.0, 257.0, 22.0] },
+        ],
         foes: &[
             foe("Shadowmaw Panther", 11452, 37, 5.6, 1.4),
             foe("Cold Eye Basilisk", 8797, 39, 3.8, 1.0),
@@ -1571,6 +2102,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-9548.5, 115.0, 60.0],
         leash: 150.0,
         victory: "Elwynn Forest is safe once more.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-9548.5, 155.0, 60.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-9508.5, 115.0, 60.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-9588.5, 115.0, 60.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-9548.5, 75.0, 60.0] },
+        ],
         foes: &[
             foe("Young Wolf", 447, 1, 5.4, 1.0),
             foe("Timber Wolf", 604, 2, 5.4, 1.0),
@@ -1606,6 +2143,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [587.5, -4311.4, 19.0],
         leash: 150.0,
         victory: "Durotar is quiet again.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [587.5, -4271.4, 19.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [627.5, -4311.4, 19.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [547.5, -4311.4, 19.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [587.5, -4351.4, 19.0] },
+        ],
         foes: &[
             foe("Vile Familiar", 1185, 4, 4.2, 1.0),
             foe("Felstalker", 850, 4, 4.2, 1.0),
@@ -1641,6 +2184,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [9737.5, 649.8, 1298.5],
         leash: 150.0,
         victory: "Teldrassil blooms again.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [9737.5, 689.8, 1298.5] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [9777.5, 649.8, 1298.5] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [9697.5, 649.8, 1298.5] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [9737.5, 609.8, 1298.5] },
+        ],
         foes: &[
             foe("Young Nightsaber", 11454, 1, 5.4, 1.5),
             foe("Young Thistle Boar", 8869, 2, 4.6, 1.0),
@@ -1676,6 +2225,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-5400.8, -739.9, 396.7],
         leash: 150.0,
         victory: "Dun Morogh thaws in your wake.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-5400.8, -699.9, 396.7] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-5360.8, -739.9, 396.7] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-5440.8, -739.9, 396.7] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-5400.8, -779.9, 396.7] },
+        ],
         foes: &[
             foe("Crag Boar", 607, 6, 4.6, 1.0),
             giant("Young Black Bear", 8843, 6, 4.6, 1.0),
@@ -1708,6 +2263,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-1809.9, -220.6, -8.4],
         leash: 150.0,
         victory: "Mulgore's herds roam free.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-1809.9, -180.6, -8.4] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-1769.9, -220.6, -8.4] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-1849.9, -220.6, -8.4] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-1809.9, -260.6, -8.4] },
+        ],
         foes: &[
             foe("Plainstrider", 1219, 2, 5.4, 1.0),
             foe("Battleboar", 8869, 4, 4.6, 1.0),
@@ -1742,6 +2303,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [1993.0, -153.3, 35.4],
         leash: 150.0,
         victory: "Tirisfal is at peace.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [1993.0, -113.3, 35.4] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [2033.0, -153.3, 35.4] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [1953.0, -153.3, 35.4] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [1993.0, -193.3, 35.4] },
+        ],
         foes: &[
             foe("Decrepit Darkhound", 9021, 6, 4.2, 1.4),
             foe("Rotting Dead", 1200, 6, 3.6, 1.0),
@@ -1776,6 +2343,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-10252.2, 1483.5, 41.6],
         leash: 150.0,
         victory: "Westfall's fields are safe.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-10252.2, 1523.5, 41.6] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-10212.2, 1483.5, 41.6] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-10292.2, 1483.5, 41.6] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-10252.2, 1443.5, 41.6] },
+        ],
         foes: &[
             foe("Young Fleshripper", 410, 11, 5.2, 0.8),
             foe("Coyote", 643, 11, 5.4, 1.0),
@@ -1811,6 +2384,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-10051.8, -792.5, 36.5],
         leash: 150.0,
         victory: "Duskwood's curse lifts.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-10051.8, -752.5, 36.5] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-10011.8, -792.5, 36.5] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-10091.8, -792.5, 36.5] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-10051.8, -832.5, 36.5] },
+        ],
         foes: &[
             foe("Pygmy Venom Web Spider", 958, 19, 4.6, 1.0),
             foe("Venom Web Spider", 955, 20, 4.6, 1.0),
@@ -1846,6 +2425,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [-9199.8, -2767.5, 91.0],
         leash: 150.0,
         victory: "Redridge is safe once more.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [-9199.8, -2727.5, 91.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [-9159.8, -2767.5, 91.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [-9239.8, -2767.5, 91.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [-9199.8, -2807.5, 91.0] },
+        ],
         foes: &[
             foe("Redridge Thrasher", 489, 15, 4.2, 1.0),
             foe("Redridge Mongrel", 487, 16, 4.2, 1.0),
@@ -1881,6 +2466,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [5478.0, -3729.0, 1593.0],
         leash: 70.0,
         victory: "Nordrassil endures.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [5478.0, -3694.0, 1593.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [5513.0, -3729.0, 1593.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [5443.0, -3729.0, 1593.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [5478.0, -3764.0, 1593.0] },
+        ],
         foes: &[
             foe("Cannibal Ghoul", 10626, 56, 4.6, 1.3),
             foe("Jadefire Rogue", 8575, 52, 5.2, 1.0),
@@ -1917,6 +2508,12 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [3010.0, -3790.0, 124.0],
         leash: 80.0,
         victory: "Kel'Thuzad's necropolis falls dark.",
+        shrines: &[
+            ShrineDef { kind: ShrineKind::Moonwell, pos: [3010.0, -3755.0, 124.0] },
+            ShrineDef { kind: ShrineKind::Swiftness, pos: [3045.0, -3790.0, 124.0] },
+            ShrineDef { kind: ShrineKind::Storm, pos: [2975.0, -3790.0, 124.0] },
+            ShrineDef { kind: ShrineKind::Greed, pos: [3010.0, -3825.0, 124.0] },
+        ],
         foes: &[
             foe("Scourge Soldier", 5231, 55, 4.4, 1.15),
             foe("Plagued Swine", 6121, 53, 5.0, 1.0),
@@ -2004,6 +2601,12 @@ fn ladder(foes: &[Foe], tuned: &[EnemyDef]) -> Vec<EnemyDef> {
             let (lo, hi) = (rungs[t.floor() as usize], rungs[t.ceil() as usize]);
             let k = t.fract();
             let mix = |a: f32, b: f32| (a + (b - a) * k).round();
+            let custom = boss_abilities_for(f.name);
+            let abilities = if !custom.is_empty() {
+                custom
+            } else {
+                tuned.get(t.round() as usize).map(|d| d.abilities).unwrap_or(&[])
+            };
             EnemyDef {
                 name: f.name,
                 display: f.display,
@@ -2014,7 +2617,280 @@ fn ladder(foes: &[Foe], tuned: &[EnemyDef]) -> Vec<EnemyDef> {
                 xp: mix(lo.2, hi.2) as u32,
                 level: f.level,
                 big: f.big,
+                abilities,
             }
         })
         .collect()
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum Difficulty {
+    #[default]
+    Normal,
+    Heroic,
+    Mythic,
+    Nightmare,
+}
+
+impl Difficulty {
+    #[allow(dead_code)]
+    pub const ALL: [Difficulty; 4] = [
+        Difficulty::Normal,
+        Difficulty::Heroic,
+        Difficulty::Mythic,
+        Difficulty::Nightmare,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Difficulty::Normal => "Normal",
+            Difficulty::Heroic => "Heroic",
+            Difficulty::Mythic => "Mythic",
+            Difficulty::Nightmare => "Nightmare",
+        }
+    }
+
+    pub fn multipliers(&self) -> (f32, f32, f32) {
+        // (hp_scale, damage_scale, xp_scale)
+        match self {
+            Difficulty::Normal => (1.0, 1.0, 1.0),
+            Difficulty::Heroic => (1.6, 1.3, 1.3),
+            Difficulty::Mythic => (2.2, 1.6, 1.6),
+            Difficulty::Nightmare => (3.2, 2.2, 2.5),
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            Difficulty::Normal => Difficulty::Heroic,
+            Difficulty::Heroic => Difficulty::Mythic,
+            Difficulty::Mythic => Difficulty::Nightmare,
+            Difficulty::Nightmare => Difficulty::Normal,
+        }
+    }
+}
+
+/// Pre-run challenge affixes selectable at campfire.
+/// Multiplier: +25% additive gold & XP rewards per active affix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct ChallengeAffixes {
+    pub glass_cannon: bool,
+    pub horde_stampede: bool,
+    pub midas_curse: bool,
+    pub turbo_blitz: bool,
+}
+
+impl ChallengeAffixes {
+    pub const PRESETS: &'static [(&'static str, ChallengeAffixes)] = &[
+        (
+            "None",
+            ChallengeAffixes {
+                glass_cannon: false,
+                horde_stampede: false,
+                midas_curse: false,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Glass Cannon",
+            ChallengeAffixes {
+                glass_cannon: true,
+                horde_stampede: false,
+                midas_curse: false,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Horde Stampede",
+            ChallengeAffixes {
+                glass_cannon: false,
+                horde_stampede: true,
+                midas_curse: false,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Midas Curse",
+            ChallengeAffixes {
+                glass_cannon: false,
+                horde_stampede: false,
+                midas_curse: true,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Turbo Blitz",
+            ChallengeAffixes {
+                glass_cannon: false,
+                horde_stampede: false,
+                midas_curse: false,
+                turbo_blitz: true,
+            },
+        ),
+        (
+            "Speed & Carnage",
+            ChallengeAffixes {
+                glass_cannon: true,
+                horde_stampede: true,
+                midas_curse: false,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Greed & Blitz",
+            ChallengeAffixes {
+                glass_cannon: false,
+                horde_stampede: false,
+                midas_curse: true,
+                turbo_blitz: true,
+            },
+        ),
+        (
+            "Mythic Trial",
+            ChallengeAffixes {
+                glass_cannon: true,
+                horde_stampede: true,
+                midas_curse: true,
+                turbo_blitz: false,
+            },
+        ),
+        (
+            "Torment (All 4)",
+            ChallengeAffixes {
+                glass_cannon: true,
+                horde_stampede: true,
+                midas_curse: true,
+                turbo_blitz: true,
+            },
+        ),
+    ];
+
+    pub fn active_count(&self) -> u32 {
+        let mut count = 0;
+        if self.glass_cannon {
+            count += 1;
+        }
+        if self.horde_stampede {
+            count += 1;
+        }
+        if self.midas_curse {
+            count += 1;
+        }
+        if self.turbo_blitz {
+            count += 1;
+        }
+        count
+    }
+
+    pub fn bonus_percent(&self) -> u32 {
+        self.active_count() * 25
+    }
+
+    #[allow(dead_code)]
+    pub fn score_multiplier(&self) -> f32 {
+        1.0 + 0.25 * (self.active_count() as f32)
+    }
+
+    pub fn preset_idx(&self) -> usize {
+        Self::PRESETS
+            .iter()
+            .position(|(_, a)| a == self)
+            .unwrap_or(0)
+    }
+
+    pub fn from_preset(idx: usize) -> Self {
+        Self::PRESETS
+            .get(idx % Self::PRESETS.len())
+            .map(|(_, a)| *a)
+            .unwrap_or_default()
+    }
+
+    pub fn next(&self) -> Self {
+        let cur = self.preset_idx();
+        Self::from_preset(cur + 1)
+    }
+
+    pub fn label(&self) -> String {
+        let preset_name = Self::PRESETS
+            .get(self.preset_idx())
+            .map(|(n, _)| *n)
+            .unwrap_or("Custom");
+        let pct = self.bonus_percent();
+        if pct == 0 {
+            "Affixes: None (+0%)".to_string()
+        } else {
+            format!("Affix: {preset_name} (+{pct}%)")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_challenge_affixes_presets() {
+        let default_affix = ChallengeAffixes::default();
+        assert_eq!(default_affix.active_count(), 0);
+        assert_eq!(default_affix.bonus_percent(), 0);
+        assert_eq!(default_affix.preset_idx(), 0);
+
+        let gc = ChallengeAffixes::from_preset(1);
+        assert!(gc.glass_cannon);
+        assert_eq!(gc.active_count(), 1);
+        assert_eq!(gc.bonus_percent(), 25);
+        assert!((gc.score_multiplier() - 1.25).abs() < 1e-4);
+
+        let torment = ChallengeAffixes::from_preset(8);
+        assert!(torment.glass_cannon && torment.horde_stampede && torment.midas_curse && torment.turbo_blitz);
+        assert_eq!(torment.active_count(), 4);
+        assert_eq!(torment.bonus_percent(), 100);
+        assert!((torment.score_multiplier() - 2.0).abs() < 1e-4);
+
+        // Test cycle
+        let next_after_torment = torment.next();
+        assert_eq!(next_after_torment.preset_idx(), 0);
+    }
+
+    #[test]
+    fn test_signature_boss_abilities_telegraphs() {
+        let kazzak = boss_abilities_for("Lord Kazzak");
+        assert!(!kazzak.is_empty());
+        assert!(kazzak.iter().any(|a| matches!(a.shape, TelegraphShape::Line { .. })));
+        assert!(kazzak.iter().any(|a| matches!(a.shape, TelegraphShape::Circle { .. })));
+
+        let rajaxx = boss_abilities_for("General Rajaxx");
+        assert!(!rajaxx.is_empty());
+        assert!(rajaxx.iter().any(|a| matches!(a.shape, TelegraphShape::Cone { .. })));
+
+        let kurinnaxx = boss_abilities_for("Kurinnaxx");
+        assert!(!kurinnaxx.is_empty());
+        assert!(kurinnaxx.iter().any(|a| a.name == "Sand Trap"));
+
+        let teremus = boss_abilities_for("Teremus the Devourer");
+        assert!(!teremus.is_empty());
+
+        let ossirian = boss_abilities_for("Ossirian the Unscarred");
+        assert!(!ossirian.is_empty());
+        assert!(ossirian.iter().any(|a| a.name == "Tornado Cyclone"));
+
+        let kt = boss_abilities_for("Kel'Thuzad");
+        assert!(!kt.is_empty());
+        assert!(kt.iter().any(|a| a.name == "Shadow Fissure"));
+    }
+
+    #[test]
+    fn test_ladder_assigns_signature_abilities() {
+        let dark_portal_roster = roster(1); // The Dark Portal
+        let kazzak_def = dark_portal_roster.bosses.iter().find(|b| b.name == "Lord Kazzak");
+        assert!(kazzak_def.is_some());
+        assert_eq!(kazzak_def.unwrap().abilities[0].name, "Shadow Bolt Frenzy");
+
+        let aq_roster = roster(2); // Gates of Ahn'Qiraj
+        let rajaxx_def = aq_roster.bosses.iter().find(|b| b.name == "General Rajaxx");
+        assert!(rajaxx_def.is_some());
+        assert_eq!(rajaxx_def.unwrap().abilities[0].name, "Thundering Cleave");
+    }
+}
+
+

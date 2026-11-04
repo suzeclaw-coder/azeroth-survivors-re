@@ -5,7 +5,9 @@ use bevy::prelude::*;
 
 use super::data::{AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
+use super::fct::{CombatTextKind, CombatTextMsg};
 use super::hero::{self, Hero};
+use super::traits;
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{Rng, Run, RunEntity};
 use crate::net::{FieldChanged, Guid, ObjectStore};
@@ -13,6 +15,8 @@ use crate::net::{FieldChanged, Guid, ObjectStore};
 /// One blow landing on one enemy.
 #[derive(Message, Clone)]
 pub(super) struct Hit {
+    pub spell: u32,
+    pub key: &'static str,
     pub target: Entity,
     pub damage: f32,
     pub dot: f32,
@@ -29,6 +33,8 @@ pub(super) struct Hit {
 impl Hit {
     pub fn direct(target: Entity, damage: f32, crit: bool) -> Self {
         Self {
+            spell: 6603,
+            key: "attack",
             target,
             damage,
             dot: 0.0,
@@ -50,6 +56,8 @@ pub(super) struct PendingHits(pub Vec<(f32, Hit)>);
 /// A ground spell's area, ticking on whatever stands in it.
 #[derive(Component)]
 pub(super) struct GroundArea {
+    spell: u32,
+    key: &'static str,
     damage: f32,
     dot: f32,
     dot_dur: f32,
@@ -66,6 +74,7 @@ pub(super) struct GroundArea {
 #[derive(Component)]
 pub(super) struct Totem {
     cast: u32,
+    key: &'static str,
     damage: f32,
     range: f32,
     radius: f32,
@@ -104,6 +113,8 @@ fn mark_secs(def: &AbilityDef, duration: f32) -> f32 {
 
 fn hit_for(def: &AbilityDef, p: &Params, target: Entity, damage: f32, crit: bool) -> Hit {
     Hit {
+        spell: def.spell,
+        key: def.key,
         target,
         damage,
         dot: p.dot,
@@ -204,6 +215,7 @@ pub(super) fn cast_abilities(
     mut fx: Fx,
     mut pending: ResMut<PendingHits>,
     mut hits: MessageWriter<Hit>,
+    mut combat_text: MessageWriter<CombatTextMsg>,
 ) {
     let dt = time.delta_secs();
     if run.dead_t.is_some() || dt <= 0.0 {
@@ -232,13 +244,148 @@ pub(super) fn cast_abilities(
             .map_or(0.0, |d| d.speed)
     };
 
+    let cdr_mult = if run.is_ultimate_active(super::ultimates::UltimateKind::MageTimeWarp) {
+        3.5
+    } else {
+        1.0
+    };
+
     for i in 0..run.abilities.len() {
-        run.abilities[i].cd -= dt;
+        run.abilities[i].cd -= dt * cdr_mult;
         if run.abilities[i].cd > 0.0 {
             continue;
         }
         let o = &run.abilities[i];
         let def = o.def;
+
+        if def.key == "whirlwind" && run.is_evolved("Bladestorm") {
+            run.abilities[i].cd = 1.0;
+            continue;
+        }
+
+        let is_pyro = def.key == "fireball" && run.is_evolved("Pyroblast");
+        let is_chaos = def.key == "shadow_bolt" && run.is_evolved("Chaos Bolt");
+        let is_stormbringer = def.key == "chain_lightning" && run.is_evolved("Stormbringer");
+        let is_glacial_blink = def.key == "blink" && run.is_evolved("Glacial Blink");
+
+        if is_chaos {
+            let Some(first) = nearest(&foes, def.range, 1).first().copied() else {
+                run.abilities[i].cd = 0.2;
+                continue;
+            };
+            let dir = flat(first.pos - hpos).normalize_or(Vec3::NEG_Z);
+            let range = def.range;
+            let burst_pos = hpos + dir * range;
+            fx.cast(me, 50796, &[], Some(burst_pos));
+
+            let mult = o.damage_mult() * stats.might;
+            let base_dmg = def.damage * mult;
+
+            for f in &foes {
+                let v = flat(f.pos - hpos);
+                let proj = v.dot(dir);
+                if proj >= 0.0 && proj <= range {
+                    let perp = (v - dir * proj).length();
+                    if perp <= 2.2 + f.radius {
+                        let (dmg, crit) = roll(&mut rng, stats.crit, base_dmg * 1.5);
+                        let s = speed_of(50796);
+                        let delay = if s > 0.0 { proj / s } else { 0.0 };
+                        schedule(
+                            &mut pending,
+                            &mut hits,
+                            now,
+                            delay,
+                            Hit {
+                                spell: 50796,
+                                key: "chaos_bolt",
+                                target: f.e,
+                                damage: dmg,
+                                dot: 0.0,
+                                dot_dur: 0.0,
+                                effect: Effect::None,
+                                mark: 0,
+                                mark_dur: 0.0,
+                                splash: 0.0,
+                                crit,
+                                color: COLOR_SPELL,
+                            },
+                        );
+                    }
+                }
+            }
+
+            for f in around(&foes, burst_pos, 5.0) {
+                let (dmg, crit) = roll(&mut rng, stats.crit, base_dmg * 2.0);
+                schedule(
+                    &mut pending,
+                    &mut hits,
+                    now,
+                    range / 25.0,
+                    Hit {
+                        spell: 50796,
+                        key: "chaos_bolt_burst",
+                        target: f.e,
+                        damage: dmg,
+                        dot: 0.0,
+                        dot_dur: 0.0,
+                        effect: Effect::None,
+                        mark: 0,
+                        mark_dur: 0.0,
+                        splash: 0.0,
+                        crit,
+                        color: COLOR_SPELL,
+                    },
+                );
+            }
+            run.abilities[i].cd = o.cooldown(&stats);
+            continue;
+        }
+
+        if is_glacial_blink {
+            let facing = flat(foes.first().map_or(Vec3::NEG_Z, |f| f.pos - hpos)).normalize_or(Vec3::NEG_Z);
+            let to = hpos + facing * 12.0;
+            fx.cast(me, 122, &[], Some(hpos));
+            fx.cast(me, 122, &[], Some(to));
+            let mult = o.damage_mult() * stats.might;
+            let dmg = def.damage * mult * 1.5;
+            for f in around(&foes, hpos, 9.0) {
+                let (dmg_val, crit) = roll(&mut rng, stats.crit, dmg);
+                hits.write(Hit {
+                    spell: 122,
+                    key: "glacial_blink",
+                    target: f.e,
+                    damage: dmg_val,
+                    dot: 0.0,
+                    dot_dur: 0.0,
+                    effect: Effect::Root(3.0),
+                    mark: 122,
+                    mark_dur: 3.0,
+                    splash: 0.0,
+                    crit,
+                    color: COLOR_SPELL,
+                });
+            }
+            for f in around(&foes, to, 9.0) {
+                let (dmg_val, crit) = roll(&mut rng, stats.crit, dmg);
+                hits.write(Hit {
+                    spell: 122,
+                    key: "glacial_blink",
+                    target: f.e,
+                    damage: dmg_val,
+                    dot: 0.0,
+                    dot_dur: 0.0,
+                    effect: Effect::Root(3.0),
+                    mark: 122,
+                    mark_dur: 3.0,
+                    splash: 0.0,
+                    crit,
+                    color: COLOR_SPELL,
+                });
+            }
+            run.abilities[i].cd = o.cooldown(&stats);
+            continue;
+        }
+
         let mult = o.damage_mult() * stats.might;
         let p = Params {
             dmg: def.damage * mult,
@@ -256,7 +403,7 @@ pub(super) fn cast_abilities(
                 } else {
                     def.range
                 };
-                let targets = if matches!(
+                let targets = if is_pyro || matches!(
                     def.key,
                     "pyroblast" | "aimed_shot" | "exorcism" | "starfire"
                 ) {
@@ -267,23 +414,32 @@ pub(super) fn cast_abilities(
                 if targets.is_empty() {
                     false
                 } else {
+                    let cast_spell = if is_pyro { 11366 } else { def.spell };
                     if def.kind == Kind::Melee {
                         fx.swing(me, targets[0].e, p.dmg);
                         for f in &targets {
-                            fx.impact(f.e, def.spell);
+                            fx.impact(f.e, cast_spell);
                         }
                     } else {
-                        fx.cast(me, def.spell, &entities(&targets), None);
+                        fx.cast(me, cast_spell, &entities(&targets), None);
                     }
+                    let hit_dmg = if is_pyro { p.dmg * 3.0 } else { p.dmg };
                     for f in &targets {
-                        let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg);
+                        let (dmg, crit) = roll(&mut rng, stats.crit, hit_dmg);
                         let delay = if speed > 0.0 { f.dist / speed } else { 0.0 };
+                        let mut hit = hit_for(def, &p, f.e, dmg, crit);
+                        if is_pyro {
+                            hit.spell = 11366;
+                            hit.key = "pyroblast";
+                            hit.damage = dmg;
+                            hit.splash = 6.0;
+                        }
                         schedule(
                             &mut pending,
                             &mut hits,
                             now,
                             delay,
-                            hit_for(def, &p, f.e, dmg, crit),
+                            hit,
                         );
                     }
                     true
@@ -345,7 +501,10 @@ pub(super) fn cast_abilities(
                             )
                         };
                         let burst = def.duration <= 0.0;
-                        commands.entity(area).insert(GroundArea {
+                        let mut area_cmd = commands.entity(area);
+                        area_cmd.insert(GroundArea {
+                            spell: def.spell,
+                            key: def.key,
                             damage: p.dmg,
                             dot: p.dot,
                             dot_dur: if burst { 5.0 } else { 0.0 },
@@ -357,6 +516,11 @@ pub(super) fn cast_abilities(
                             mark: def.mark,
                             impact: if def.overhead { def.spell } else { 0 },
                         });
+                        if def.key == "blizzard" && run.is_evolved("Glacial Vortex") {
+                            area_cmd.insert(super::evolutions::GlacialVortex {
+                                radius: p.radius,
+                            });
+                        }
                         true
                     }
                 }
@@ -364,8 +528,9 @@ pub(super) fn cast_abilities(
             Kind::Chain => match nearest(&foes, def.range, 1).first().copied() {
                 None => false,
                 Some(first) => {
+                    let max_chain = if is_stormbringer { 10 } else { p.count + 1 };
                     let mut chain = vec![first];
-                    while chain.len() < p.count + 1 {
+                    while chain.len() < max_chain {
                         let last = chain[chain.len() - 1].pos;
                         let next = foes
                             .iter()
@@ -392,6 +557,40 @@ pub(super) fn cast_abilities(
                             0.08 * k as f32,
                             hit_for(def, &p, f.e, dmg, crit),
                         );
+                    }
+                    if is_stormbringer {
+                        for f in &chain {
+                            let static_targets: Vec<Foe> = foes
+                                .iter()
+                                .filter(|o| !chain.iter().any(|c| c.e == o.e) && flat(o.pos - f.pos).length() <= 6.0)
+                                .take(2)
+                                .copied()
+                                .collect();
+                            for s in static_targets {
+                                fx.impact(s.e, 403);
+                                let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg * 0.4);
+                                schedule(
+                                    &mut pending,
+                                    &mut hits,
+                                    now,
+                                    0.1,
+                                    Hit {
+                                        spell: 421,
+                                        key: "stormbringer_static",
+                                        target: s.e,
+                                        damage: dmg,
+                                        dot: 0.0,
+                                        dot_dur: 0.0,
+                                        effect: Effect::None,
+                                        mark: 0,
+                                        mark_dur: 0.0,
+                                        splash: 0.0,
+                                        crit,
+                                        color: COLOR_SPELL,
+                                    },
+                                );
+                            }
+                        }
                     }
                     true
                 }
@@ -484,6 +683,12 @@ pub(super) fn cast_abilities(
                     run.heal_t = p.duration;
                     fx.cast(me, def.spell, &[me], None);
                     fx.number(me, p.dmg, false, COLOR_HEAL);
+                    combat_text.write(CombatTextMsg {
+                        pos: hpos,
+                        amount: p.dmg,
+                        is_crit: false,
+                        kind: CombatTextKind::Heal,
+                    });
                     true
                 } else {
                     false
@@ -515,6 +720,7 @@ pub(super) fn cast_abilities(
                     );
                     commands.entity(totem).insert(Totem {
                         cast: def.totem.1,
+                        key: def.key,
                         damage: p.dmg,
                         range: def.range,
                         radius: p.radius,
@@ -528,7 +734,8 @@ pub(super) fn cast_abilities(
                 }
             }
         };
-        run.abilities[i].cd = if fired { p.cooldown } else { 0.2 };
+        let actual_cd = if is_stormbringer { 0.6 } else { p.cooldown };
+        run.abilities[i].cd = if fired { actual_cd } else { 0.2 };
     }
 }
 
@@ -579,6 +786,8 @@ pub(super) fn tick_areas(
                 }
                 let (dmg, crit) = roll(&mut rng, stats.crit, area.damage);
                 hits.write(Hit {
+                    spell: area.spell,
+                    key: area.key,
                     target: f.e,
                     damage: dmg,
                     dot: area.dot,
@@ -621,6 +830,8 @@ pub(super) fn tick_areas(
             for f in &targets {
                 let (dmg, crit) = roll(&mut rng, stats.crit, totem.damage);
                 hits.write(Hit {
+                    spell: totem.cast,
+                    key: totem.key,
                     color: COLOR_SPELL,
                     ..Hit::direct(f.e, dmg, crit)
                 });
@@ -646,6 +857,8 @@ pub(super) fn tick_areas(
                 now,
                 delay,
                 Hit {
+                    spell: totem.cast,
+                    key: totem.key,
                     color: COLOR_SPELL,
                     ..Hit::direct(f.e, dmg, crit)
                 },
@@ -662,6 +875,7 @@ pub(super) fn apply_hits(
     mut run: ResMut<Run>,
     mut pending: ResMut<PendingHits>,
     mut incoming: MessageReader<Hit>,
+    hero: Query<&Transform, With<Hero>>,
     mut enemies: Query<(
         Entity,
         &Guid,
@@ -673,6 +887,7 @@ pub(super) fn apply_hits(
     mut fx: Fx,
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
+    mut combat_text: MessageWriter<CombatTextMsg>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
@@ -709,7 +924,7 @@ pub(super) fn apply_hits(
     }
 
     let mut kill =
-        |commands: &mut Commands, run: &mut Run, e: Entity, pos: Vec3, en: &mut Enemy| {
+        |commands: &mut Commands, run: &mut Run, e: Entity, pos: Vec3, en: &mut Enemy, spell: u32, key: &'static str| {
             en.dead = true;
             en.hp = 0.0;
             en.dots.clear();
@@ -718,8 +933,15 @@ pub(super) fn apply_hits(
                 pos,
                 xp: en.xp,
                 boss: en.boss,
+                elite: en.def.big || en.xp >= 10 || en.champion.is_some(),
+                double_gold: spell == 50796 || key == "chaos_bolt" || key == "chaos_bolt_burst",
             });
+            if let Some(champ) = en.champion {
+                enemies::spawn_gem(commands, run.guid(), pos + Vec3::X * 0.6, enemies::GemKind::Gold(75));
+                run.banner = Some((format!("{} Champion Slain! +75 Gold!", champ.name()), 3.0));
+            }
             run.kills += 1;
+            run.meter.record_kill(spell, key);
             if en.boss {
                 run.banner = Some((format!("{} is slain!", en.def.name), 3.0));
             }
@@ -738,13 +960,60 @@ pub(super) fn apply_hits(
                 dmg = dmg.max(en.hp);
             }
         }
+        if en.champion_shield > 0.0 {
+            let absorbed = dmg.min(en.champion_shield);
+            en.champion_shield -= absorbed;
+            dmg -= absorbed;
+            fx.number(e, absorbed, false, 0xFFFF_D700);
+        }
         if dmg > 0.0 {
             en.hp -= dmg;
             run.damage_done += f64::from(dmg);
+            run.meter.record_hit(h.spell, h.key, dmg, h.crit);
             fx.number(e, dmg, h.crit, h.color);
-            if let Effect::Drain(frac) = h.effect {
+            combat_text.write(CombatTextMsg {
+                pos: tf.translation,
+                amount: dmg,
+                is_crit: h.crit,
+                kind: CombatTextKind::from_key(h.key),
+            });
+            if (h.spell == 11366 || h.key == "pyroblast") && h.target == e {
+                let serial = run.guid();
+                let crater = units::spawn_area_object(&mut commands, serial, 11366, 6.0, tf.translation);
+                commands.entity(crater).insert(GroundArea {
+                    spell: 11366,
+                    key: "burning_crater",
+                    damage: 12.0 * run.stats().might,
+                    dot: 0.0,
+                    dot_dur: 0.0,
+                    radius: 6.0,
+                    left: 4.0,
+                    every: 0.5,
+                    next_tick: 0.5,
+                    effect: Effect::None,
+                    mark: 0,
+                    impact: 11366,
+                });
+            }
+            let drain_frac = match h.effect {
+                Effect::Drain(frac) => frac,
+                _ if run.race == 5 && traits::is_bleeding_or_burning(&en) => 0.10,
+                _ => 0.0,
+            };
+            if drain_frac > 0.0 {
                 let max = run.stats().max_hp;
-                run.hp = (run.hp + dmg * frac).min(max);
+                let heal = (dmg * drain_frac).min(max - run.hp);
+                run.hp = (run.hp + heal).min(max);
+                if heal > 0.0 {
+                    if let Ok(htf) = hero.single() {
+                        combat_text.write(CombatTextMsg {
+                            pos: htf.translation,
+                            amount: heal,
+                            is_crit: false,
+                            kind: CombatTextKind::Heal,
+                        });
+                    }
+                }
             }
         }
         if h.dot > 0.0 && h.dot_dur > 0.0 {
@@ -752,6 +1021,8 @@ pub(super) fn apply_hits(
                 en.dots.remove(0);
             }
             en.dots.push(enemies::Dot {
+                spell: h.spell,
+                key: h.key,
                 dps: h.dot,
                 left: h.dot_dur,
                 tick: 1.0,
@@ -777,7 +1048,7 @@ pub(super) fn apply_hits(
             marks.add(h.mark, h.mark_dur);
         }
         if en.hp <= 0.0 {
-            kill(&mut commands, &mut run, e, tf.translation, &mut en);
+            kill(&mut commands, &mut run, e, tf.translation, &mut en, h.spell, h.key);
             units::kill_unit(&mut store);
             marks.clear();
         }
@@ -790,12 +1061,15 @@ pub(super) fn apply_hits(
             continue;
         }
         let mut dealt = 0.0;
+        let mut last_dot = (0u32, "");
         for d in &mut en.dots {
             d.left -= dt;
             d.tick -= dt;
             if d.tick <= 0.0 {
                 d.tick += 1.0;
                 dealt += d.dps;
+                run.meter.record_hit(d.spell, d.key, d.dps, false);
+                last_dot = (d.spell, d.key);
             }
         }
         en.dots.retain(|d| d.left > 0.0);
@@ -803,8 +1077,14 @@ pub(super) fn apply_hits(
             en.hp -= dealt;
             run.damage_done += f64::from(dealt);
             fx.number(e, dealt, false, COLOR_SPELL);
+            combat_text.write(CombatTextMsg {
+                pos: tf.translation,
+                amount: dealt,
+                is_crit: false,
+                kind: CombatTextKind::from_key(last_dot.1),
+            });
             if en.hp <= 0.0 {
-                kill(&mut commands, &mut run, e, tf.translation, &mut en);
+                kill(&mut commands, &mut run, e, tf.translation, &mut en, last_dot.0, last_dot.1);
                 units::kill_unit(&mut store);
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);

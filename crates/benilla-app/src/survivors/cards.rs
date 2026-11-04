@@ -133,6 +133,7 @@ pub(super) fn rarity(choice: Choice, run: &Run) -> Rarity {
             _ => Rarity::Uncommon,
         },
         Choice::Heal => Rarity::Common,
+        Choice::Evolution(_) => Rarity::Legendary,
     }
 }
 
@@ -160,6 +161,16 @@ pub(super) struct Rays;
 #[derive(Resource, Default)]
 pub(super) struct PendingPick(Option<(usize, f32)>);
 
+impl PendingPick {
+    pub(super) fn is_pending(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+/// Pulse timer for banish visuals (card burn/red border pulse).
+#[derive(Resource, Default)]
+pub(super) struct BanishFlash(pub(super) f32);
+
 const PICK_SECS: f32 = 0.28;
 
 /// The cards, rebuilt for each offer.
@@ -171,9 +182,13 @@ pub(super) fn deal_cards(
     font: Res<HudFont>,
     rows: Query<Entity, With<hud::OfferRow>>,
     mut fills: ResMut<Assets<FillMaterial>>,
+    mut sounds: MessageWriter<crate::sound::GlueSound>,
 ) {
     if !offer.is_changed() {
         return;
+    }
+    if !offer.choices().is_empty() {
+        sounds.write(crate::sound::GlueSound("igQuestListOpen"));
     }
     let Ok(row) = rows.single() else { return };
     commands.entity(row).despawn_related::<Children>();
@@ -401,6 +416,7 @@ pub(super) fn animate_cards(
         &mut UiTransform,
         &mut BoxShadow,
         &mut Visibility,
+        &mut BorderColor,
     )>,
     mut shines: Query<(&CardShine, &mut Node)>,
     mut rays: Query<&mut UiTransform, (With<Rays>, Without<Card>)>,
@@ -409,6 +425,7 @@ pub(super) fn animate_cards(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    mut flash: ResMut<BanishFlash>,
 ) {
     if *phase.get() != Phase::LevelUp {
         pending.0 = None;
@@ -416,13 +433,16 @@ pub(super) fn animate_cards(
     }
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
+    if flash.0 > 0.0 {
+        flash.0 = (flash.0 - dt).max(0.0);
+    }
     for mut r in &mut rays {
         r.rotation = Rot2::radians(now * 0.12);
         r.scale = Vec2::splat(1.0 + 0.03 * (now * 1.7).sin());
     }
     let chosen = pending.0.map(|(i, _)| i);
     let mut shine_at = [None::<f32>; 4];
-    for (mut card, interaction, cursor, mut tf, mut shadow, mut vis) in &mut cards {
+    for (mut card, interaction, cursor, mut tf, mut shadow, mut vis, mut border) in &mut cards {
         let card = &mut *card;
         card.t += dt;
         if card.t < 0.0 {
@@ -475,8 +495,21 @@ pub(super) fn animate_cards(
         tf.scale = Vec2::new(s * squash, s * (1.0 + card.tilt.y.abs() * 0.02));
         tf.rotation = Rot2::degrees((1.0 - e) * -14.0 + lean);
         let rc = card.rarity.color();
+        let border_color = if flash.0 > 0.0 {
+            let u = (flash.0 / 0.4).clamp(0.0, 1.0);
+            let burn = Color::srgb(1.0, 0.2, 0.05);
+            rc.mix(&burn, u * 0.9)
+        } else {
+            rc
+        };
+        *border = BorderColor::all(border_color);
         if let Some(sh) = shadow.0.first_mut() {
-            sh.color = rc.with_alpha((0.25 + 0.6 * h) * (1.0 - pick_fade));
+            let shadow_color = if flash.0 > 0.0 {
+                Color::srgb(1.0, 0.2, 0.05)
+            } else {
+                rc
+            };
+            sh.color = shadow_color.with_alpha((0.25 + 0.6 * h) * (1.0 - pick_fade));
             sh.blur_radius = Val::Px(18.0 + 22.0 * h);
             sh.spread_radius = Val::Px(2.0 + 4.0 * h);
             sh.y_offset = Val::Px(6.0 + 10.0 * h);
@@ -506,19 +539,63 @@ pub(super) fn animate_cards(
 }
 
 /// A click on a card, or 1/2/3: start its burst; the choice applies when it finishes.
+/// Pressing R rerolls the offer, pressing X skips the level and awards bonus XP.
+/// Pressing B (or clicking Banish or controller North/Y) banishes a card from future offers.
+/// Gamepad: West (Card 1), South (Card 2), East (Card 3), North (Banish), Select/RT (Reroll), Start/LT (Skip).
 pub(super) fn choose_card(
     phase: Res<State<Phase>>,
     keys: Res<ButtonInput<KeyCode>>,
-    cards: Query<(&Card, &Interaction), Changed<Interaction>>,
-    offer: Res<Offer>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<&Gamepad>,
+    cards: Query<(&Card, &Interaction)>,
+    banish_btn: Query<&Interaction, (With<hud::DraftBanishBtn>, Changed<Interaction>)>,
+    mut offer: ResMut<Offer>,
     mut pending: ResMut<PendingPick>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    mut next: ResMut<NextState<Phase>>,
+    mut flash: ResMut<BanishFlash>,
+    mut sounds: MessageWriter<crate::sound::GlueSound>,
 ) {
-    if *phase.get() != Phase::LevelUp || pending.0.is_some() {
+    if *phase.get() != Phase::LevelUp || pending.is_pending() {
+        return;
+    }
+    let gp_reroll = gamepads.iter().any(|gp| {
+        gp.just_pressed(GamepadButton::RightTrigger) || gp.just_pressed(GamepadButton::Select)
+    });
+    let gp_skip = gamepads.iter().any(|gp| {
+        gp.just_pressed(GamepadButton::LeftTrigger) || gp.just_pressed(GamepadButton::Start)
+    });
+    let gp_banish = gamepads.iter().any(|gp| gp.just_pressed(GamepadButton::North));
+    let clicked_banish = banish_btn.iter().any(|i| *i == Interaction::Pressed);
+
+    if (keys.just_pressed(KeyCode::KeyR) || gp_reroll) && run.rerolls > 0 {
+        sounds.write(crate::sound::GlueSound("igMainMenuOptionCheckBoxOff"));
+        hud::reroll(&mut run, &mut offer, &mut rng);
+        return;
+    }
+    if (keys.just_pressed(KeyCode::KeyX) || gp_skip) && run.skips > 0 {
+        sounds.write(crate::sound::GlueSound("igMainMenuOptionCheckBoxOff"));
+        hud::skip(&mut run, &mut offer, &mut rng, &mut next);
+        return;
+    }
+    if (keys.just_pressed(KeyCode::KeyB) || gp_banish || clicked_banish)
+        && run.banishes > 0
+        && !offer.choices().is_empty()
+    {
+        let target_idx = cards
+            .iter()
+            .find(|(_, i)| matches!(**i, Interaction::Hovered | Interaction::Pressed))
+            .map(|(c, _)| c.index)
+            .unwrap_or(0);
+        flash.0 = 0.4;
+        sounds.write(crate::sound::GlueSound("igMainMenuOptionCheckBoxOff"));
+        hud::banish(&mut run, &mut offer, &mut rng, target_idx);
         return;
     }
     let mut pick = cards
         .iter()
-        .find(|(c, i)| **i == Interaction::Pressed && c.t >= DEAL_SECS)
+        .find(|(c, i)| **i == Interaction::Pressed && c.t >= DEAL_SECS && mouse.just_pressed(MouseButton::Left))
         .map(|(c, _)| c.index);
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
         .into_iter()
@@ -528,7 +605,19 @@ pub(super) fn choose_card(
             pick = Some(i);
         }
     }
+    for gp in &gamepads {
+        if gp.just_pressed(GamepadButton::West) {
+            pick = Some(0);
+        }
+        if gp.just_pressed(GamepadButton::South) {
+            pick = Some(1);
+        }
+        if gp.just_pressed(GamepadButton::East) {
+            pick = Some(2);
+        }
+    }
     if let Some(i) = pick.filter(|&i| i < offer.len()) {
         pending.0 = Some((i, 0.0));
+        sounds.write(crate::sound::GlueSound("gsTitleOptionOK"));
     }
 }

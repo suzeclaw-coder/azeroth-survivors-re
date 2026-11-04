@@ -59,6 +59,16 @@ pub(super) struct CamRig {
     /// Elevation above the horizon (radians), clamped so the camera never dives underground.
     pub pitch: f32,
     pub mode: CamMode,
+    pub shake_t: f32,
+    pub shake_strength: f32,
+}
+
+impl CamRig {
+    /// Triggers an impulse camera shake for high-impact combat moments.
+    pub fn shake(&mut self, strength: f32, duration: f32) {
+        self.shake_strength = self.shake_strength.max(strength);
+        self.shake_t = self.shake_t.max(duration);
+    }
 }
 
 impl Default for CamRig {
@@ -69,6 +79,8 @@ impl Default for CamRig {
             yaw: 0.0,
             pitch: FIXED_PITCH,
             mode: CamMode::Fixed,
+            shake_t: 0.0,
+            shake_strength: 0.0,
         }
     }
 }
@@ -131,11 +143,17 @@ pub(super) fn spawn_hero(
 /// Midday over the battleground, whatever the clock says.
 pub(super) const MINUTE_OF_DAY: u32 = 780;
 
-pub(super) fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
+pub(super) fn daylight(
+    debug: Option<ResMut<benilla_world::dev_state::DebugState>>,
+    event_state: Option<Res<super::events::WorldEventState>>,
+) {
     let Some(mut debug) = debug else { return };
-    if debug.lighting.follow_server_time || debug.lighting.manual_minute != MINUTE_OF_DAY {
+    let is_blood_moon = event_state.as_ref().is_some_and(|s| s.blood_moon_t > 0.0);
+    // Midnight darkness during Blood Moon eclipse, bright midday sun otherwise
+    let target_minute = if is_blood_moon { 0 } else { MINUTE_OF_DAY };
+    if debug.lighting.follow_server_time || debug.lighting.manual_minute != target_minute {
         debug.lighting.follow_server_time = false;
-        debug.lighting.manual_minute = MINUTE_OF_DAY;
+        debug.lighting.manual_minute = target_minute;
     }
 }
 
@@ -151,9 +169,26 @@ pub(super) fn aim_cursor(
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     world: WorldPoint,
+    gamepads: Query<&Gamepad>,
     mut aim: ResMut<AimPoint>,
 ) {
-    let point = (|| {
+    let mut gamepad_aim = None;
+    for gp in &gamepads {
+        let rx = gp.get(GamepadAxis::RightStickX).unwrap_or(0.0);
+        let ry = gp.get(GamepadAxis::RightStickY).unwrap_or(0.0);
+        if rx * rx + ry * ry > 0.04 {
+            if let Ok(htf) = hero.single() {
+                let hpos = htf.translation;
+                let aim_dir = Vec3::new(rx, 0.0, -ry).normalize_or_zero();
+                let p = hpos + aim_dir * 14.0;
+                let ground_y = world.terrain_height_under(p).unwrap_or(hpos.y);
+                gamepad_aim = Some(Vec3::new(p.x, ground_y, p.z));
+                break;
+            }
+        }
+    }
+
+    let point = gamepad_aim.or_else(|| {
         let cursor = windows.single().ok()?.cursor_position()?;
         let (cam, tf) = cams.single().ok()?;
         let ray = cam
@@ -177,7 +212,7 @@ pub(super) fn aim_cursor(
             }
         }
         at
-    })();
+    });
     if aim.0 != point {
         aim.0 = point;
     }
@@ -188,18 +223,21 @@ pub(super) fn aim_cursor(
 pub(super) fn drive_hero(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     phase: Res<State<Phase>>,
-    run: Res<Run>,
+    mut run: ResMut<Run>,
     selection: Res<Selection>,
     rig: Res<CamRig>,
     aim: Res<AimPoint>,
     world: WorldPoint,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
-    mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero)>,
+    mut hero: Query<(Entity, &mut Transform, &mut MovementState, &mut Hero)>,
+    enemies: Query<(&Transform, &super::enemies::Enemy), Without<Hero>>,
+    mut fx: Fx,
 ) {
     let focus = match hero.single_mut() {
-        Ok((mut tf, mut mv, mut hm)) => {
+        Ok((me, mut tf, mut mv, mut hm)) => {
             let dt = time.delta_secs();
             let mut dir = Vec3::ZERO;
             if let Some(auto) = auto
@@ -219,6 +257,28 @@ pub(super) fn drive_hero(
                 }
                 if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
                     dir.x += 1.0;
+                }
+                for gp in &gamepads {
+                    let lx = gp.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
+                    let ly = gp.get(GamepadAxis::LeftStickY).unwrap_or(0.0);
+                    if lx.abs() > 0.18 {
+                        dir.x += lx;
+                    }
+                    if ly.abs() > 0.18 {
+                        dir.z -= ly;
+                    }
+                    if gp.pressed(GamepadButton::DPadUp) {
+                        dir.z -= 1.0;
+                    }
+                    if gp.pressed(GamepadButton::DPadDown) {
+                        dir.z += 1.0;
+                    }
+                    if gp.pressed(GamepadButton::DPadLeft) {
+                        dir.x -= 1.0;
+                    }
+                    if gp.pressed(GamepadButton::DPadRight) {
+                        dir.x += 1.0;
+                    }
                 }
                 // In orbit mode WASD is camera-relative; in fixed mode it stays world-relative.
                 if rig.mode == CamMode::Orbit {
@@ -243,7 +303,15 @@ pub(super) fn drive_hero(
             }
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
-                let speed = run.stats().speed * run.haste_mult();
+                let mut speed = run.stats().speed * run.haste_mult();
+                let near_frozen = enemies.iter().any(|(etf, en)| {
+                    en.champion == Some(super::enemies::ChampionModifier::Frozen)
+                        && !en.dead
+                        && (etf.translation - pos).length_squared() <= 36.0
+                });
+                if near_frozen {
+                    speed *= 0.75;
+                }
                 pos += dir * speed * dt;
                 mv.speed = speed;
                 mv.flags = match face {
@@ -258,6 +326,28 @@ pub(super) fn drive_hero(
                 mv.speed = 0.0;
                 mv.flags = 0;
             }
+            let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
+            let gp_dash = gamepads.iter().any(|gp| {
+                gp.just_pressed(GamepadButton::RightTrigger2)
+                    || gp.just_pressed(GamepadButton::East)
+            });
+            if playing
+                && (keys.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) || gp_dash)
+                && run.dash_cd <= 0.0
+            {
+                let dash_dir = if dir != Vec3::ZERO {
+                    dir.normalize()
+                } else {
+                    flat(tf.rotation * Vec3::NEG_Z).normalize_or(Vec3::NEG_Z)
+                };
+                tf.rotation = Quat::from_rotation_y(yaw_toward(dash_dir));
+                pos += dash_dir * 12.0;
+                run.dash_cd = run.dash_max_cd;
+                run.iframe_t = 0.25;
+                fx.cast(me, 1604, &[me], None);
+                hm.air = 0.0;
+                hm.vy = 0.0;
+            }
             let map = selection.stage_def();
             let center = arena(map);
             let off = flat(pos - center);
@@ -271,8 +361,15 @@ pub(super) fn drive_hero(
             }
             let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
             let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
-            // Space hops: lift off the terrain, then gravity brings the hero back down.
-            if playing && keys.just_pressed(KeyCode::Space) && hm.vy == 0.0 && hm.air == 0.0 {
+            let gp_jump = gamepads
+                .iter()
+                .any(|gp| gp.just_pressed(GamepadButton::South));
+            // Space or Gamepad A hops: lift off the terrain, then gravity brings the hero back down.
+            if playing
+                && (keys.just_pressed(KeyCode::Space) || gp_jump)
+                && hm.vy == 0.0
+                && hm.air == 0.0
+            {
                 hm.vy = JUMP_SPEED;
             }
             if playing && (hm.vy != 0.0 || hm.air > 0.0) {
@@ -367,8 +464,12 @@ pub(super) fn place_camera(
         };
         rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(ZOOM_MIN, ZOOM_MAX);
     }
-    let (eye, look) = if *phase.get() == Phase::Menu {
-        rig.orbit += time.delta_secs() * 0.2;
+    let dt = time.delta_secs();
+    if rig.shake_t > 0.0 {
+        rig.shake_t = (rig.shake_t - dt).max(0.0);
+    }
+    let (mut eye, mut look) = if *phase.get() == Phase::Menu {
+        rig.orbit += dt * 0.2;
         let d = 7.0;
         (
             focus + Vec3::new(rig.orbit.sin() * d, 2.4, rig.orbit.cos() * d),
@@ -391,6 +492,17 @@ pub(super) fn place_camera(
         }
         (eye, look)
     };
+    if rig.shake_t > 0.0 && rig.shake_strength > 0.0 {
+        let f = (rig.shake_t / 0.4).min(1.0);
+        let freq = time.elapsed_secs() * 45.0;
+        let shake = Vec3::new(
+            freq.sin() * rig.shake_strength * f * 0.35,
+            (freq * 1.3).cos() * rig.shake_strength * f * 0.25,
+            (freq * 0.7).sin() * rig.shake_strength * f * 0.35,
+        );
+        eye += shake;
+        look += shake;
+    }
     let placed = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     for mut cam in &mut cams {
         *cam = placed;
@@ -400,10 +512,18 @@ pub(super) fn place_camera(
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
 /// through.
 pub(super) fn hurt_hero(run: &mut Run, raw: f32) -> f32 {
-    if run.immune_t > 0.0 || run.dead_t.is_some() {
+    if run.immune_t > 0.0 || run.iframe_t > 0.0 || run.dead_t.is_some() {
         return 0.0;
     }
-    let mut dmg = (raw - run.stats().armor).max(1.0);
+    let stats = run.stats();
+    if stats.evasion > 0.0 {
+        let roll = ((run.guid().wrapping_mul(1103515245).wrapping_add(12345) >> 16) & 0x7fff) as f32
+            / 32768.0;
+        if roll < stats.evasion {
+            return 0.0;
+        }
+    }
+    let mut dmg = (raw - stats.armor).max(1.0);
     if run.shield_t > 0.0 && run.shield > 0.0 {
         let absorbed = dmg.min(run.shield);
         run.shield -= absorbed;
@@ -434,7 +554,10 @@ pub(super) fn hero_vitals(
         }
         return;
     }
-    run.elapsed += dt;
+    let clock_dt = if run.affixes.turbo_blitz { dt * 1.5 } else { dt };
+    run.elapsed += clock_dt;
+    run.dash_cd = (run.dash_cd - clock_dt).max(0.0);
+    run.iframe_t = (run.iframe_t - dt).max(0.0);
     let r = &mut *run;
     for t in [&mut r.shield_t, &mut r.immune_t, &mut r.thorns_t] {
         *t = (*t - dt).max(0.0);
@@ -477,11 +600,14 @@ pub(super) fn hero_vitals(
         units::kill_unit(&mut store);
         marks.clear();
         marks.flush(entity, guid.0, &mut store, &mut fields);
-    } else if run.elapsed >= data::VICTORY_SECS {
+    } else if run.elapsed >= data::VICTORY_SECS && !run.overtime {
         run.won = true;
-        // A last flourish before the results.
+        run.overtime = true;
         fx.cast(entity, 642, &[entity], None);
-        next.set(Phase::GameOver);
+        run.banner = Some((
+            "Victory! Endless Overtime Begins — Survive if you can!".into(),
+            5.0,
+        ));
     }
 }
 

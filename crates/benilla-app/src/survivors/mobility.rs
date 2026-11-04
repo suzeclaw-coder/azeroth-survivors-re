@@ -161,11 +161,15 @@ impl Run {
 
     /// The run speed's multiplier from a haste still running.
     pub(super) fn haste_mult(&self) -> f32 {
-        if self.mobile.haste_t > 0.0 {
+        let mut mult = if self.mobile.haste_t > 0.0 {
             self.mobile.haste
         } else {
             1.0
+        };
+        if self.is_ultimate_active(super::ultimates::UltimateKind::MageTimeWarp) {
+            mult *= 1.5;
         }
+        mult
     }
 }
 
@@ -174,6 +178,7 @@ impl Run {
 pub(super) fn cast_mobility(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     phase: Res<State<Phase>>,
     mut run: ResMut<Run>,
     world: WorldPoint,
@@ -188,7 +193,13 @@ pub(super) fn cast_mobility(
     m.cd = (m.cd - dt).max(0.0);
     m.haste_t = (m.haste_t - dt).max(0.0);
     m.vanish_t = (m.vanish_t - dt).max(0.0);
-    if *phase.get() != Phase::Playing || run.dead_t.is_some() || !keys.just_pressed(KEY) {
+    let gp_cast = gamepads.iter().any(|gp| {
+        gp.just_pressed(GamepadButton::LeftTrigger2) || gp.just_pressed(GamepadButton::West)
+    });
+    if *phase.get() != Phase::Playing
+        || run.dead_t.is_some()
+        || (!keys.just_pressed(KEY) && !gp_cast)
+    {
         return;
     }
     let Some(def) = run.mobility() else { return };
@@ -225,6 +236,16 @@ pub(super) fn cast_mobility(
             let mut to = leash(pos + toward * far);
             to.y = ground(to);
             tf.translation = to;
+            if run.is_evolved("Glacial Blink") {
+                super::evolutions::glacial_blink_detonate(
+                    me,
+                    pos,
+                    to,
+                    &mut run,
+                    &mut enemies,
+                    &mut fx,
+                );
+            }
         }
         Move::Charge(yd) => {
             // The enemy in reach nearest the cursor (or the hero, with none).

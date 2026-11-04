@@ -12,9 +12,11 @@ use bevy::ui_render::ui_material::{MaterialNode, UiMaterial};
 use bevy::window::PrimaryWindow;
 
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
+use super::enemies::Enemy;
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
-use super::{Owned, Phase, Rng, Run, Selection, Stats};
+use crate::sound::GlueSound;
+use super::{cards, Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 /// The mobility button's edge, an action button's 36 units.
@@ -49,6 +51,8 @@ pub(super) struct TimerText;
 #[derive(Component)]
 pub(super) struct KillText;
 #[derive(Component)]
+pub(super) struct GoldText;
+#[derive(Component)]
 pub(super) struct HpFrame;
 #[derive(Component)]
 pub(super) struct HpBar;
@@ -62,6 +66,24 @@ pub(super) struct HpFill;
 pub(super) struct ShieldFill;
 #[derive(Component)]
 pub(super) struct BannerText;
+#[derive(Component)]
+pub(super) struct BossFrame;
+#[derive(Component)]
+pub(super) struct BossNameText;
+#[derive(Component)]
+pub(super) struct BossHpFill;
+#[derive(Component)]
+pub(super) struct BossHpText;
+#[derive(Component)]
+pub(super) struct BossCastFrame;
+#[derive(Component)]
+pub(super) struct BossCastFill;
+#[derive(Component)]
+pub(super) struct BossCastText;
+#[derive(Component)]
+pub(super) struct BloodMoonOverlay;
+#[derive(Component)]
+pub(super) struct CriticalVignette;
 #[derive(Component)]
 pub(super) struct AbilityRow;
 #[derive(Component)]
@@ -99,6 +121,20 @@ pub(super) struct MobilitySlot;
 #[derive(Component)]
 pub(super) struct MobilityIcon;
 #[derive(Component)]
+pub(super) struct DashStatus;
+#[derive(Component)]
+pub(super) struct DashStatusText;
+#[derive(Component)]
+pub(super) struct UltimateStatus;
+#[derive(Component)]
+pub(super) struct UltimateStatusText;
+#[derive(Component)]
+pub(super) struct UltimateStatusFill;
+#[derive(Component)]
+pub(super) struct ShrineBuffPill;
+#[derive(Component)]
+pub(super) struct ShrineBuffText;
+#[derive(Component)]
 pub(super) struct MobilitySweep(Handle<SweepUiMaterial>);
 #[derive(Component)]
 pub(super) struct OverTitle;
@@ -108,6 +144,31 @@ pub(super) struct OverStats;
 pub(super) struct OverLine;
 #[derive(Component)]
 pub(super) struct OverStat(usize);
+#[derive(Component)]
+pub(super) struct OverMeterRows;
+
+#[derive(Component)]
+pub(super) struct MeterRoot;
+#[derive(Component)]
+pub(super) struct MeterBadge;
+#[derive(Component)]
+pub(super) struct MeterRows;
+#[derive(Component)]
+pub(super) struct MeterBadgeText;
+#[derive(Component)]
+pub(super) struct MeterSortLabel;
+#[derive(Component)]
+pub(super) struct DraftRerollBtn;
+#[derive(Component)]
+pub(super) struct DraftRerollText;
+#[derive(Component)]
+pub(super) struct DraftSkipBtn;
+#[derive(Component)]
+pub(super) struct DraftSkipText;
+#[derive(Component)]
+pub(super) struct DraftBanishBtn;
+#[derive(Component)]
+pub(super) struct DraftBanishText;
 
 /// An icon slot filled from the spell's `SpellIcon` once the client data is up.
 #[derive(Component)]
@@ -164,6 +225,11 @@ pub(super) enum UiAction {
     Resume,
     MainMenu,
     Quit,
+    ToggleMeter,
+    CycleMeterSort,
+    RerollOffer,
+    SkipOffer,
+    BanishOffer,
 }
 
 /// The colour a button returns to when not hovered.
@@ -177,6 +243,7 @@ pub(super) enum Choice {
     NewPassive(&'static PassiveDef),
     UpPassive(usize),
     Heal,
+    Evolution(&'static super::evolutions::EvolutionDef),
 }
 
 /// The level-up cards on offer.
@@ -307,6 +374,146 @@ pub(super) fn setup_hud(
             Visibility::Hidden,
         ))
         .with_children(|root| {
+            // Blood Moon crimson atmospheric overlay
+            root.spawn((
+                BloodMoonOverlay,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                bevy::ui::FocusPolicy::Pass,
+            ));
+
+            // Critical low-health pulsing vignette overlay (<30% HP)
+            root.spawn((
+                CriticalVignette,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    border: UiRect::all(Val::Px(36.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::NONE),
+                BackgroundColor(Color::NONE),
+                bevy::ui::FocusPolicy::Pass,
+            ));
+
+            // In-game slide-in Achievement Toast notification (top right)
+            root.spawn((
+                super::achievements::AchievementToastRoot,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(16.0),
+                    right: Val::Px(16.0),
+                    width: Val::Px(360.0),
+                    height: Val::Px(56.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                BorderColor::all(Color::srgb(0.95, 0.78, 0.25)),
+                BackgroundColor(Color::srgba(0.08, 0.08, 0.12, 0.94)),
+                GlobalZIndex(450),
+                Visibility::Hidden,
+            ))
+            .with_children(|toast| {
+                // Left decorative shield / trophy icon marker
+                toast
+                    .spawn((
+                        Node {
+                            width: Val::Px(36.0),
+                            height: Val::Px(36.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BorderColor::all(Color::srgb(1.0, 0.85, 0.3)),
+                        BackgroundColor(Color::srgba(0.2, 0.15, 0.05, 0.8)),
+                    ))
+                    .with_children(|icon_box| {
+                        icon_box.spawn((
+                            Text::new("★"),
+                            TextFont {
+                                font: f.clone(),
+                                font_size: 20.0,
+                                ..default()
+                            },
+                            TextColor(GOLD),
+                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        ));
+                    });
+
+                // Middle title & description column
+                toast
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        flex_grow: 1.0,
+                        ..default()
+                    })
+                    .with_children(|col| {
+                        col.spawn((
+                            super::achievements::AchievementToastTitle,
+                            Text::new("Achievement Unlocked!"),
+                            TextFont {
+                                font: f.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(GOLD),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::BLACK,
+                            },
+                            TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                        ));
+                        col.spawn((
+                            super::achievements::AchievementToastDesc,
+                            Text::new(""),
+                            TextFont {
+                                font: f.clone(),
+                                font_size: 11.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::BLACK,
+                            },
+                            TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                        ));
+                    });
+
+                // Right Bounty reward tag
+                toast.spawn((
+                    super::achievements::AchievementToastBounty,
+                    Text::new("+0g"),
+                    TextFont {
+                        font: f.clone(),
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(1.0, 0.9, 0.4)),
+                    TextShadow {
+                        offset: Vec2::new(1.0, 1.0),
+                        color: Color::BLACK,
+                    },
+                    TextLayout::new(Justify::Right, LineBreak::NoWrap),
+                ));
+            });
+
             // `MainMenuExpBar`, 1024×13 at the bottom centre. The reference stacks it on the
             // 40-unit action bar; with no action bar here it rests on the screen's edge.
             root.spawn((
@@ -394,6 +601,149 @@ pub(super) fn setup_hud(
                 });
             });
             minimap::spawn_cluster(root, f, &map);
+
+            // --- AZS Spell Meter HUD Panel ---
+            root.spawn((
+                MeterRoot,
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
+                    top: Val::Px(200.0),
+                    width: Val::Px(318.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(3.0),
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(5.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    display: Display::Flex,
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(Color::srgba(0.04, 0.03, 0.02, 0.88)),
+            ))
+            .with_children(|meter| {
+                // Title & Controls Bar
+                meter.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
+                    margin: UiRect::bottom(Val::Px(2.0)),
+                    ..default()
+                })
+                .with_children(|bar| {
+                    bar.spawn(Node {
+                        column_gap: Val::Px(6.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|left| {
+                        left.spawn(text(f, "AZS Spell Meter", 13.0, GOLD));
+                        left.spawn(text(f, "[M]", 11.0, DIM));
+                    });
+
+                    bar.spawn(Node {
+                        column_gap: Val::Px(4.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|right| {
+                        // Sort toggle button
+                        right.spawn((
+                            button(UiAction::CycleMeterSort, BUTTON),
+                            Node {
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|b| {
+                            b.spawn((MeterSortLabel, text(f, "Sort: Dmg", 10.0, GOLD)));
+                        });
+
+                        // Minimize button
+                        right.spawn((
+                            button(UiAction::ToggleMeter, BUTTON),
+                            Node {
+                                width: Val::Px(18.0),
+                                height: Val::Px(18.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text(f, "-", 12.0, GOLD));
+                        });
+                    });
+                });
+
+                // Column Headers
+                meter.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
+                    border: UiRect::bottom(Val::Px(1.0)),
+                    ..default()
+                })
+                .insert(BorderColor::all(Color::srgba(0.5, 0.4, 0.2, 0.3)))
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Node { width: Val::Px(104.0), ..default() },
+                        text(f, "Ability", 10.0, DIM),
+                    ));
+                    hdr.spawn((
+                        Node { width: Val::Px(36.0), justify_content: JustifyContent::Center, ..default() },
+                        text(f, "Kills", 10.0, DIM),
+                    ));
+                    hdr.spawn((
+                        Node { width: Val::Px(52.0), justify_content: JustifyContent::FlexEnd, ..default() },
+                        text(f, "Damage", 10.0, DIM),
+                    ));
+                    hdr.spawn((
+                        Node { width: Val::Px(48.0), justify_content: JustifyContent::FlexEnd, ..default() },
+                        text(f, "DPS", 10.0, DIM),
+                    ));
+                    hdr.spawn((
+                        Node { width: Val::Px(34.0), justify_content: JustifyContent::FlexEnd, ..default() },
+                        text(f, "%", 10.0, DIM),
+                    ));
+                });
+
+                // Dynamic Ability Rows
+                meter.spawn((
+                    MeterRows,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+            });
+
+            // Minimized Badge (when meter is in Mini mode)
+            root.spawn((
+                MeterBadge,
+                button(UiAction::ToggleMeter, BUTTON),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
+                    top: Val::Px(200.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    display: Display::None,
+                    ..default()
+                },
+            ))
+            .with_children(|b| {
+                b.spawn((MeterBadgeText, text(f, "⚡ AZS Meter  [M]", 11.0, GOLD)));
+            });
             // The mobility button: a 36-unit action slot in `UI-Quickslot2`, its key over it.
             root.spawn((
                 MobilitySlot,
@@ -462,6 +812,89 @@ pub(super) fn setup_hud(
                     ));
                 });
             });
+            // Dash status HUD indicator in the action bar area.
+            root.spawn((
+                DashStatus,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(88.0),
+                    margin: UiRect::left(Val::Px(-75.0)),
+                    width: Val::Px(150.0),
+                    height: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(BUTTON),
+            ))
+            .with_children(|b| {
+                b.spawn((DashStatusText, centered(f, "DASH [Shift]: READY", 11.0, GOLD)));
+            });
+            // Ultimate status / energy meter HUD indicator.
+            root.spawn((
+                UltimateStatus,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(118.0),
+                    margin: UiRect::left(Val::Px(-80.0)),
+                    width: Val::Px(160.0),
+                    height: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(BUTTON),
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    UltimateStatusFill,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        bottom: Val::Px(0.0),
+                        width: Val::Percent(0.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.8, 0.65, 0.1, 0.35)),
+                ));
+                b.spawn((UltimateStatusText, centered(f, "[SPACE] ULTIMATE: 0%", 11.0, DIM)));
+            });
+            // Active shrine buff HUD indicator.
+            root.spawn((
+                ShrineBuffPill,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(148.0),
+                    margin: UiRect::left(Val::Px(-90.0)),
+                    width: Val::Px(180.0),
+                    height: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(BUTTON),
+            ))
+            .with_children(|b| {
+                b.spawn((ShrineBuffText, centered(f, "", 11.0, GOLD)));
+            });
             root.spawn(Node {
                 width: Val::Percent(100.0),
                 padding: UiRect::all(Val::Px(10.0)),
@@ -508,6 +941,7 @@ pub(super) fn setup_hud(
                     .with_children(|line| {
                         line.spawn((LevelText, text(f, "Level 1", 14.0, GOLD)));
                         line.spawn((KillText, text(f, "Kills 0", 14.0, Color::WHITE)));
+                        line.spawn((GoldText, text(f, "Gold: 0", 14.0, GOLD)));
                     });
                 });
                 // The minimap cluster's column.
@@ -525,6 +959,105 @@ pub(super) fn setup_hud(
             })
             .with_children(|n| {
                 n.spawn((BannerText, centered(f, "", 30.0, GOLD)));
+            });
+
+            // Top-center Boss Health and Cast Bar
+            root.spawn((
+                BossFrame,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    top: Val::Px(55.0),
+                    margin: UiRect::left(Val::Px(-200.0)),
+                    width: Val::Px(400.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                Visibility::Hidden,
+            ))
+            .with_children(|frame| {
+                frame.spawn((
+                    BossNameText,
+                    centered(f, "", 16.0, GOLD),
+                    Node {
+                        margin: UiRect::bottom(Val::Px(3.0)),
+                        ..default()
+                    },
+                ));
+
+                frame
+                    .spawn((
+                        Node {
+                            width: Val::Px(400.0),
+                            height: Val::Px(18.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::srgb(0.7, 0.55, 0.2)),
+                        BackgroundColor(Color::srgba(0.08, 0.08, 0.08, 0.85)),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            BossHpFill,
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.85, 0.12, 0.12)),
+                        ));
+                        bar.spawn((
+                            BossHpText,
+                            centered(f, "", 12.0, Color::WHITE),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                        ));
+                    });
+
+                frame
+                    .spawn((
+                        BossCastFrame,
+                        Node {
+                            width: Val::Px(360.0),
+                            height: Val::Px(14.0),
+                            margin: UiRect::top(Val::Px(3.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::srgb(0.9, 0.6, 0.1)),
+                        BackgroundColor(Color::srgba(0.05, 0.05, 0.05, 0.9)),
+                        Visibility::Hidden,
+                    ))
+                    .with_children(|cast| {
+                        cast.spawn((
+                            BossCastFill,
+                            Node {
+                                width: Val::Percent(0.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(1.0, 0.55, 0.0)),
+                        ));
+                        cast.spawn((
+                            BossCastText,
+                            centered(f, "", 11.0, Color::WHITE),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                        ));
+                    });
             });
             // The hero's health as a nameplate (`CGNamePlateFrame`): the bar under the border that
             // caps it, the level in the border's seat; [`hero_plate`] sizes and seats it.
@@ -709,6 +1242,75 @@ pub(super) fn setup_hud(
                 },
             ));
             root.spawn(centered(f, "Click a card, or press 1, 2 or 3", 14.0, DIM));
+
+            // Draft Agency Row: [R] Reroll (N) and [X] Skip (N)
+            root.spawn(Node {
+                column_gap: Val::Px(16.0),
+                margin: UiRect::top(Val::Px(14.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    DraftRerollBtn,
+                    button(UiAction::RerollOffer, BUTTON),
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        DraftRerollText,
+                        text(f, "[R] Reroll (2)", 13.0, GOLD),
+                        bevy::ui::FocusPolicy::Pass,
+                    ));
+                });
+
+                row.spawn((
+                    DraftSkipBtn,
+                    button(UiAction::SkipOffer, BUTTON),
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        DraftSkipText,
+                        text(f, "[X] Skip (1)", 13.0, Color::srgb(0.7, 0.9, 1.0)),
+                        bevy::ui::FocusPolicy::Pass,
+                    ));
+                });
+
+                row.spawn((
+                    DraftBanishBtn,
+                    button(UiAction::BanishOffer, BUTTON),
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        DraftBanishText,
+                        text(f, "[B] Banish (2)", 13.0, GOLD),
+                        bevy::ui::FocusPolicy::Pass,
+                    ));
+                });
+            });
         });
 
     // --- Pause. ---
@@ -816,6 +1418,34 @@ pub(super) fn setup_hud(
                 }
             });
             root.spawn((OverStats, centered(f, "", 15.0, DIM)));
+
+            // AZSSpellMeter Final Run Breakdown
+            root.spawn((
+                Node {
+                    width: Val::Px(580.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                    margin: UiRect::vertical(Val::Px(4.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(Color::srgba(0.04, 0.03, 0.02, 0.88)),
+            ))
+            .with_children(|card| {
+                card.spawn(centered(f, "Spell Performance Breakdown (AZSSpellMeter)", 13.0, GOLD));
+                card.spawn((
+                    OverMeterRows,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+            });
             root.spawn((
                 edged_button(UiAction::MainMenu, BUTTON, GOLD),
                 Node {
@@ -895,7 +1525,11 @@ pub(super) fn menu_preview(
     );
 }
 
-pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
+pub(super) fn start_run(
+    run: &mut Run,
+    selection: &mut Selection,
+    account: Option<&super::save::Account>,
+) -> bool {
     let (Some(class), Some(&(_, race, _))) = (
         selection.class_def(),
         selection.look.and_then(|i| selection.looks.get(i)),
@@ -905,10 +1539,17 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
     // The world goes to the battleground picked; until now it stood in the last one.
     selection.stage = selection.map;
     let next_guid = run.next_guid;
+    let upgrades = account
+        .map(|a| a.upgrades.clone())
+        .unwrap_or_else(|| super::save::AccountSave::load().upgrades);
+    let dash_max_cd = (3.0 - 0.3 * upgrades.dash_cd as f32).max(1.0);
     *run = Run {
         class,
         race,
         next_guid,
+        dash_max_cd,
+        upgrades,
+        affixes: selection.affixes,
         ..Run::default()
     };
     run.abilities.push(Owned {
@@ -921,28 +1562,57 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
     true
 }
 
-fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
+pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
+    let is_banished = |name: &str, key: &str| -> bool {
+        run.banished.iter().any(|b| {
+            b.eq_ignore_ascii_case(name)
+                || b.eq_ignore_ascii_case(key)
+                || b.replace(' ', "_").eq_ignore_ascii_case(key)
+                || key.replace('_', " ").eq_ignore_ascii_case(b)
+        })
+    };
+
+    for o in &run.abilities {
+        if !is_banished(o.def.name, o.def.key) {
+            if let Some(evo) = super::evolutions::check_evolution_available(run, o.def.key) {
+                if !is_banished(evo.evolved_name, evo.base_ability) {
+                    pool.push((Choice::Evolution(evo), 3.0));
+                }
+            }
+        }
+    }
+    if !is_banished("Blink", "blink") {
+        if let Some(evo) = super::evolutions::check_evolution_available(run, "blink") {
+            if !is_banished(evo.evolved_name, evo.base_ability)
+                && !pool.iter().any(|(c, _)| matches!(c, Choice::Evolution(e) if e.base_ability == "blink"))
+            {
+                pool.push((Choice::Evolution(evo), 3.0));
+            }
+        }
+    }
+
     for (i, o) in run.abilities.iter().enumerate() {
-        if o.level < data::MAX_ABILITY_LEVEL {
+        if o.level < data::MAX_ABILITY_LEVEL && !is_banished(o.def.name, o.def.key) {
             pool.push((Choice::Upgrade(i), 1.2));
         }
     }
     if run.abilities.len() < data::MAX_ABILITIES {
         for key in run.class.pool {
-            if !run.abilities.iter().any(|o| o.def.key == *key) {
-                pool.push((Choice::NewAbility(data::ability(key)), 1.0));
+            let def = data::ability(key);
+            if !run.abilities.iter().any(|o| o.def.key == *key) && !is_banished(def.name, def.key) {
+                pool.push((Choice::NewAbility(def), 1.0));
             }
         }
     }
-    for (i, (_, level)) in run.passives.iter().enumerate() {
-        if *level < data::MAX_PASSIVE_LEVEL {
+    for (i, (p, level)) in run.passives.iter().enumerate() {
+        if *level < data::MAX_PASSIVE_LEVEL && !is_banished(p.name, p.key) {
             pool.push((Choice::UpPassive(i), 0.8));
         }
     }
     if run.passives.len() < data::MAX_PASSIVES {
         for p in data::PASSIVES {
-            if !run.passives.iter().any(|(q, _)| q.key == p.key) {
+            if !run.passives.iter().any(|(q, _)| q.key == p.key) && !is_banished(p.name, p.key) {
                 pool.push((Choice::NewPassive(p), 0.5));
             }
         }
@@ -991,6 +1661,10 @@ pub(super) fn pick(
         Choice::NewPassive(p) => run.passives.push((p, 1)),
         Choice::UpPassive(k) => run.passives[k].1 += 1,
         Choice::Heal => run.hp = run.stats().max_hp,
+        Choice::Evolution(evo) => {
+            run.evolved.push(evo.evolved_name);
+            run.banner = Some((format!("Evolution Unlocked: {}!", evo.evolved_name), 3.5));
+        }
     }
     run.version += 1;
     run.pending_levels = run.pending_levels.saturating_sub(1);
@@ -1000,6 +1674,93 @@ pub(super) fn pick(
         offer.choices.clear();
         next.set(Phase::Playing);
     }
+}
+
+pub(super) fn reroll(run: &mut Run, offer: &mut Offer, rng: &mut Rng) {
+    if run.rerolls > 0 {
+        run.rerolls -= 1;
+        offer.choices = choices_for(run, rng);
+    }
+}
+
+pub(super) fn skip(
+    run: &mut Run,
+    offer: &mut Offer,
+    rng: &mut Rng,
+    next: &mut NextState<Phase>,
+) {
+    if run.skips > 0 {
+        run.skips -= 1;
+        run.xp += 50.0;
+        run.pending_levels = run.pending_levels.saturating_sub(1);
+        if run.pending_levels > 0 {
+            offer.choices = choices_for(run, rng);
+        } else {
+            offer.choices.clear();
+            next.set(Phase::Playing);
+        }
+    }
+}
+
+pub(super) fn banish(
+    run: &mut Run,
+    offer: &mut Offer,
+    rng: &mut Rng,
+    target: usize,
+) -> Option<String> {
+    if run.banishes == 0 || offer.choices.is_empty() {
+        return None;
+    }
+    run.banishes -= 1;
+    let idx = target.min(offer.choices.len().saturating_sub(1));
+    let choice = offer.choices[idx];
+    let banished_name = match choice {
+        Choice::NewAbility(def) => {
+            let n = def.name.to_string();
+            run.banished.push(n.clone());
+            if def.key != def.name {
+                run.banished.push(def.key.to_string());
+            }
+            n
+        }
+        Choice::Upgrade(k) => {
+            if let Some(o) = run.abilities.get(k) {
+                let n = o.def.name.to_string();
+                run.banished.push(n.clone());
+                if o.def.key != o.def.name {
+                    run.banished.push(o.def.key.to_string());
+                }
+                n
+            } else {
+                String::new()
+            }
+        }
+        Choice::NewPassive(p) => {
+            let n = p.name.to_string();
+            run.banished.push(n.clone());
+            run.banished.push(p.key.to_string());
+            n
+        }
+        Choice::UpPassive(k) => {
+            if let Some(&(p, _)) = run.passives.get(k) {
+                let n = p.name.to_string();
+                run.banished.push(n.clone());
+                run.banished.push(p.key.to_string());
+                n
+            } else {
+                String::new()
+            }
+        }
+        Choice::Heal => String::new(),
+        Choice::Evolution(evo) => {
+            let n = evo.evolved_name.to_string();
+            run.banished.push(n.clone());
+            run.banished.push(evo.base_ability.to_string());
+            n
+        }
+    };
+    offer.choices = choices_for(run, rng);
+    Some(banished_name)
 }
 
 pub(super) fn looks_for(
@@ -1025,12 +1786,26 @@ pub(super) fn buttons(
         Changed<Interaction>,
     >,
     mut next: ResMut<NextState<Phase>>,
+    mut run: ResMut<Run>,
     mut exit: MessageWriter<AppExit>,
     phase: Res<State<Phase>>,
+    mut offer: ResMut<Offer>,
+    mut rng: ResMut<Rng>,
+    pending: Res<cards::PendingPick>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
-            Interaction::Hovered => bg.0 = BUTTON_HOT,
+            Interaction::Hovered => {
+                let active = match action {
+                    UiAction::RerollOffer => run.rerolls > 0,
+                    UiAction::SkipOffer => run.skips > 0,
+                    UiAction::BanishOffer => run.banishes > 0,
+                    _ => true,
+                };
+                if active {
+                    bg.0 = BUTTON_HOT;
+                }
+            }
             Interaction::None => bg.0 = base.0,
             Interaction::Pressed => {
                 bg.0 = BUTTON_HOT;
@@ -1039,6 +1814,25 @@ pub(super) fn buttons(
                     (UiAction::MainMenu, Phase::Paused | Phase::GameOver) => next.set(Phase::Menu),
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
                         exit.write(AppExit::Success);
+                    }
+                    (UiAction::ToggleMeter, _) => {
+                        run.meter.toggle();
+                    }
+                    (UiAction::CycleMeterSort, _) => {
+                        run.meter.cycle_sort();
+                    }
+                    (UiAction::RerollOffer, Phase::LevelUp) => {
+                        if !pending.is_pending() {
+                            reroll(&mut run, &mut offer, &mut rng);
+                        }
+                    }
+                    (UiAction::SkipOffer, Phase::LevelUp) => {
+                        if !pending.is_pending() {
+                            skip(&mut run, &mut offer, &mut rng, &mut next);
+                        }
+                    }
+                    (UiAction::BanishOffer, Phase::LevelUp) => {
+                        // Handled in choose_card with hovered card context.
                     }
                     _ => {}
                 }
@@ -1049,30 +1843,40 @@ pub(super) fn buttons(
 
 pub(super) fn keys(
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     phase: Res<State<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
+    account: Option<Res<super::save::Account>>,
 ) {
+    let gp_start = gamepads.iter().any(|gp| gp.just_pressed(GamepadButton::Start));
+    let gp_south = gamepads.iter().any(|gp| gp.just_pressed(GamepadButton::South));
+    let gp_select = gamepads.iter().any(|gp| gp.just_pressed(GamepadButton::Select));
     match phase.get() {
         Phase::Menu => {
-            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection) {
+            if (keys.just_pressed(KeyCode::Enter) || gp_start)
+                && start_run(&mut run, &mut selection, account.as_deref())
+            {
                 next.set(Phase::Playing);
             }
         }
         Phase::Playing => {
-            if keys.just_pressed(KeyCode::Escape) {
+            if keys.just_pressed(KeyCode::Escape) || gp_start {
                 next.set(Phase::Paused);
+            }
+            if keys.just_pressed(KeyCode::KeyM) || gp_select {
+                run.meter.toggle();
             }
         }
         Phase::Paused => {
-            if keys.just_pressed(KeyCode::Escape) {
+            if keys.just_pressed(KeyCode::Escape) || gp_start || gp_south {
                 next.set(Phase::Playing);
             }
         }
         Phase::LevelUp => {}
         Phase::GameOver => {
-            if keys.just_pressed(KeyCode::Enter) {
+            if keys.just_pressed(KeyCode::Enter) || gp_start || gp_south {
                 next.set(Phase::Menu);
             }
         }
@@ -1206,6 +2010,14 @@ pub(super) fn describe_card(
             desc: "Everything is mastered. Restores all health.".into(),
             ranks: None,
         },
+        Choice::Evolution(evo) => CardText {
+            spell: evo.icon_spell,
+            name: evo.evolved_name.into(),
+            tag: "Evolution".into(),
+            tag_color: cards::LEGENDARY,
+            desc: evo.description.into(),
+            ranks: None,
+        },
     }
 }
 
@@ -1225,6 +2037,7 @@ pub(super) fn refresh_hud(
         Query<&mut Text, With<OverTitle>>,
         Query<&mut Text, With<OverStats>>,
         Query<&mut Text, With<XpText>>,
+        Query<&mut Text, With<GoldText>>,
     )>,
     mut xp_fill: Query<&mut Node, With<XpFill>>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
@@ -1244,13 +2057,24 @@ pub(super) fn refresh_hud(
     if let Ok(mut t) = texts.p0().single_mut() {
         **t = format!("Level {}", run.level);
     }
-    let secs = run.elapsed as u32;
     if let Ok(mut t) = texts.p1().single_mut() {
-        **t = format!("{:02}:{:02}", secs / 60, secs % 60);
+        if run.overtime {
+            let ot_secs = (run.elapsed - data::VICTORY_SECS).max(0.0) as u32;
+            **t = format!("+{:02}:{:02} OT", ot_secs / 60, ot_secs % 60);
+        } else {
+            let secs = run.elapsed as u32;
+            **t = format!("{:02}:{:02}", secs / 60, secs % 60);
+        }
     }
     let kills = run.kills;
     if let Ok(mut t) = texts.p2().single_mut() {
         **t = format!("Kills {kills}");
+    }
+    if let Ok(mut t) = texts.p7().single_mut() {
+        let gold_str = format!("Gold: {}", run.gold);
+        if **t != gold_str {
+            **t = gold_str;
+        }
     }
     let banner = match run.banner.as_mut() {
         Some((msg, t)) => {
@@ -1286,15 +2110,36 @@ pub(super) fn refresh_hud(
     if let Ok(mut t) = texts.p4().single_mut() {
         **t = title;
     }
-    let summary = format!(
-        "{} {} in {}   —   press Enter to play again",
-        crate::char_select::race_name(run.race),
-        run.class.name,
-        selection.map_def().name,
-    );
+    let affixes_str = if run.affixes.active_count() > 0 {
+        format!("   —   [Affixes: +{}% Bonus]", run.affixes.bonus_percent())
+    } else {
+        String::new()
+    };
+    let stats = if run.overtime {
+        let ot_secs = (run.elapsed - data::VICTORY_SECS).max(0.0) as u32;
+        format!(
+            "{} {} in {} (Overtime +{:02}:{:02})   —   Gold Gained: +{}g{}   —   press Enter to play again",
+            crate::char_select::race_name(run.race),
+            run.class.name,
+            selection.map_def().name,
+            ot_secs / 60,
+            ot_secs % 60,
+            run.gold,
+            affixes_str,
+        )
+    } else {
+        format!(
+            "{} {} in {}{}   —   Gold Gained: +{}g   —   press Enter to play again",
+            crate::char_select::race_name(run.race),
+            run.class.name,
+            selection.map_def().name,
+            affixes_str,
+            run.gold,
+        )
+    };
     if let Ok(mut t) = texts.p5().single_mut() {
-        if **t != summary {
-            **t = summary;
+        if **t != stats {
+            **t = stats;
         }
     }
 
@@ -1311,7 +2156,18 @@ pub(super) fn refresh_hud(
                 run.abilities
                     .iter()
                     .enumerate()
-                    .map(|(i, o)| (o.def.spell, o.level, 40.0, TipFor::Ability(i)))
+                    .map(|(i, o)| {
+                        let spell = if let Some(evo) = super::evolutions::evolution_for_base(o.def.key) {
+                            if run.is_evolved(evo.evolved_name) {
+                                evo.icon_spell
+                            } else {
+                                o.def.spell
+                            }
+                        } else {
+                            o.def.spell
+                        };
+                        (spell, o.level, 40.0, TipFor::Ability(i))
+                    })
                     .collect()
             } else {
                 run.passives
@@ -1403,6 +2259,416 @@ pub(super) fn fill_icons(
     }
 }
 
+/// The dash status indicator in the action bar: shows ready, cooldown, or invulnerability frames.
+pub(super) fn refresh_dash(
+    run: Res<Run>,
+    mut status: Query<(&mut BorderColor, &mut BackgroundColor), With<DashStatus>>,
+    mut text: Query<(&mut Text, &mut TextColor), With<DashStatusText>>,
+) {
+    let (msg, color, border, bg) = if run.iframe_t > 0.0 {
+        (
+            "DASH [Shift]: I-FRAME".to_string(),
+            Color::srgb(0.4, 0.9, 1.0),
+            BorderColor::all(Color::srgb(0.4, 0.9, 1.0)),
+            BackgroundColor(Color::srgba(0.1, 0.25, 0.35, 0.95)),
+        )
+    } else if run.dash_cd <= 0.0 {
+        (
+            "DASH [Shift]: READY".to_string(),
+            GOLD,
+            BorderColor::all(EDGE),
+            BackgroundColor(BUTTON),
+        )
+    } else {
+        (
+            format!("DASH [Shift]: {:.1}s", run.dash_cd),
+            DIM,
+            BorderColor::all(Color::srgba(0.35, 0.3, 0.2, 0.6)),
+            BackgroundColor(Color::srgba(0.1, 0.05, 0.05, 0.85)),
+        )
+    };
+
+    if let Ok((mut t, mut col)) = text.single_mut() {
+        if **t != msg {
+            **t = msg;
+        }
+        if col.0 != color {
+            col.0 = color;
+        }
+    }
+    if let Ok((mut b_col, mut b_bg)) = status.single_mut() {
+        if *b_col != border {
+            *b_col = border;
+        }
+        if *b_bg != bg {
+            *b_bg = bg;
+        }
+    }
+}
+
+/// The ultimate status indicator & energy meter: shows charging percent, ready state, or active duration.
+pub(super) fn refresh_ultimate(
+    run: Res<Run>,
+    mut status: Query<(&mut BorderColor, &mut BackgroundColor), With<UltimateStatus>>,
+    mut text: Query<(&mut Text, &mut TextColor), With<UltimateStatusText>>,
+    mut fill: Query<(&mut Node, &mut BackgroundColor), (With<UltimateStatusFill>, Without<UltimateStatus>)>,
+) {
+    let (msg, color, border, bg, fill_pct, fill_col) = if let Some((kind, t)) = run.ultimate_active {
+        (
+            format!("{} {:.1}s", kind.name().to_uppercase(), t.max(0.0)),
+            Color::srgb(0.4, 0.9, 1.0),
+            BorderColor::all(Color::srgb(0.4, 0.9, 1.0)),
+            BackgroundColor(Color::srgba(0.1, 0.25, 0.35, 0.95)),
+            (t / kind.duration() * 100.0).clamp(0.0, 100.0),
+            BackgroundColor(Color::srgba(0.2, 0.6, 0.8, 0.45)),
+        )
+    } else if run.ultimate_charge >= 100.0 {
+        (
+            "[SPACE] READY!".to_string(),
+            Color::srgb(1.0, 0.9, 0.2), // Glowing gold/amber text
+            BorderColor::all(Color::srgb(1.0, 0.82, 0.1)),
+            BackgroundColor(Color::srgba(0.3, 0.2, 0.05, 0.95)),
+            100.0,
+            BackgroundColor(Color::srgba(1.0, 0.8, 0.1, 0.5)),
+        )
+    } else {
+        (
+            format!("[SPACE] Ultimate: {:.0}%", run.ultimate_charge),
+            DIM,
+            BorderColor::all(Color::srgba(0.35, 0.3, 0.2, 0.6)),
+            BackgroundColor(Color::srgba(0.1, 0.05, 0.05, 0.85)),
+            run.ultimate_charge.clamp(0.0, 100.0),
+            BackgroundColor(Color::srgba(0.7, 0.5, 0.1, 0.3)),
+        )
+    };
+
+    if let Ok((mut t, mut col)) = text.single_mut() {
+        if **t != msg {
+            **t = msg;
+        }
+        if col.0 != color {
+            col.0 = color;
+        }
+    }
+    if let Ok((mut b_col, mut b_bg)) = status.single_mut() {
+        if *b_col != border {
+            *b_col = border;
+        }
+        if *b_bg != bg {
+            *b_bg = bg;
+        }
+    }
+    if let Ok((mut node, mut f_bg)) = fill.single_mut() {
+        let w = Val::Percent(fill_pct);
+        if node.width != w {
+            node.width = w;
+        }
+        if *f_bg != fill_col {
+            *f_bg = fill_col;
+        }
+    }
+}
+
+/// Screen-space crimson atmospheric tint during the Blood Moon Eclipse event.
+pub(super) fn refresh_blood_moon(
+    time: Res<Time>,
+    events: Option<Res<super::events::WorldEventState>>,
+    mut overlay: Query<&mut BackgroundColor, With<BloodMoonOverlay>>,
+) {
+    let Some(events) = events else { return };
+    for mut bg in &mut overlay {
+        if events.blood_moon_t > 0.0 {
+            // Sinusoidal pulsing crimson tint during active Blood Moon
+            let pulse = ((time.elapsed_secs() * 2.5).sin() * 0.5 + 0.5) * 0.08 + 0.12;
+            let target = Color::srgba(0.85, 0.05, 0.05, pulse);
+            if bg.0 != target {
+                bg.0 = target;
+            }
+        } else if bg.0 != Color::NONE {
+            bg.0 = Color::NONE;
+        }
+    }
+}
+
+/// Critical low-health visual vignette & audio heartbeat pulse when HP < 30%.
+pub(super) fn refresh_critical_vignette(
+    time: Res<Time>,
+    run: Res<Run>,
+    mut heartbeat: Local<f32>,
+    mut sfx: MessageWriter<GlueSound>,
+    mut overlay: Query<(&mut BackgroundColor, &mut BorderColor), With<CriticalVignette>>,
+) {
+    let max_hp = run.stats().max_hp;
+    let hp_ratio = if max_hp > 0.0 {
+        (run.hp / max_hp).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    let is_critical = hp_ratio < 0.30 && run.hp > 0.0 && run.dead_t.is_none();
+
+    for (mut bg, mut border) in &mut overlay {
+        if is_critical {
+            // Pulse frequency speeds up as health drops lower (between 3.0Hz at 30% and 6.0Hz at near-death)
+            let danger_factor = ((0.30 - hp_ratio) / 0.30).clamp(0.0, 1.0);
+            let pulse_speed = 3.2 + danger_factor * 3.5;
+            let pulse = (time.elapsed_secs() * pulse_speed).sin() * 0.5 + 0.5;
+
+            // Subtle inner crimson wash
+            let inner_alpha = 0.04 + pulse * (0.08 + danger_factor * 0.12);
+            let target_bg = Color::srgba(0.8, 0.05, 0.05, inner_alpha);
+            if bg.0 != target_bg {
+                bg.0 = target_bg;
+            }
+
+            // Strong pulsing border vignette
+            let border_alpha = 0.25 + pulse * (0.45 + danger_factor * 0.30);
+            let target_border = Color::srgba(0.85, 0.02, 0.02, border_alpha);
+            if border.top != target_border {
+                *border = BorderColor::all(target_border);
+            }
+
+            // Heartbeat audio thump at pulse intervals
+            *heartbeat -= time.delta_secs();
+            if *heartbeat <= 0.0 {
+                let interval = (0.75 - danger_factor * 0.35).clamp(0.35, 0.85);
+                *heartbeat = interval;
+                sfx.write(GlueSound("igMainMenuOptionCheckBoxOff"));
+            }
+        } else {
+            *heartbeat = 0.0;
+            if bg.0 != Color::NONE {
+                bg.0 = Color::NONE;
+            }
+            if border.top != Color::NONE {
+                *border = BorderColor::all(Color::NONE);
+            }
+        }
+    }
+}
+
+/// Dynamic achievement toast presentation: slides in upon milestone unlock and hides after duration.
+pub(super) fn refresh_achievement_toast(
+    state: Res<super::achievements::AchievementState>,
+    mut root_q: Query<&mut Visibility, With<super::achievements::AchievementToastRoot>>,
+    mut title_q: Query<
+        &mut Text,
+        (
+            With<super::achievements::AchievementToastTitle>,
+            Without<super::achievements::AchievementToastDesc>,
+            Without<super::achievements::AchievementToastBounty>,
+        ),
+    >,
+    mut desc_q: Query<
+        &mut Text,
+        (
+            With<super::achievements::AchievementToastDesc>,
+            Without<super::achievements::AchievementToastTitle>,
+            Without<super::achievements::AchievementToastBounty>,
+        ),
+    >,
+    mut bounty_q: Query<
+        &mut Text,
+        (
+            With<super::achievements::AchievementToastBounty>,
+            Without<super::achievements::AchievementToastTitle>,
+            Without<super::achievements::AchievementToastDesc>,
+        ),
+    >,
+) {
+    let Ok(mut vis) = root_q.single_mut() else { return };
+    if let Some((def, _timer)) = &state.active_toast {
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
+        for mut t in &mut title_q {
+            let s = format!("Achievement: {}", def.name);
+            if **t != s {
+                **t = s;
+            }
+        }
+        for mut t in &mut desc_q {
+            if **t != def.desc {
+                **t = def.desc.to_string();
+            }
+        }
+        for mut t in &mut bounty_q {
+            let s = format!("+{}g", def.bounty);
+            if **t != s {
+                **t = s;
+            }
+        }
+    } else if *vis != Visibility::Hidden {
+        *vis = Visibility::Hidden;
+    }
+}
+
+/// The active shrine buff indicator: shows shrine name and remaining seconds when active.
+pub(super) fn refresh_shrine_buff(
+    run: Res<Run>,
+    mut status: Query<(&mut Node, &mut BorderColor, &mut BackgroundColor), With<ShrineBuffPill>>,
+    mut text: Query<(&mut Text, &mut TextColor), With<ShrineBuffText>>,
+) {
+    let (display, msg, color, border, bg) = if let Some((kind, t)) = run.shrine_buff {
+        let msg = format!("{} {:.0}s", kind.name(), t.max(0.0));
+        let (border, bg, col) = match kind {
+            data::ShrineKind::Moonwell => (
+                BorderColor::all(Color::srgb(0.2, 0.9, 0.6)),
+                BackgroundColor(Color::srgba(0.05, 0.25, 0.15, 0.95)),
+                Color::srgb(0.4, 1.0, 0.7),
+            ),
+            data::ShrineKind::Swiftness => (
+                BorderColor::all(Color::srgb(0.9, 0.9, 0.2)),
+                BackgroundColor(Color::srgba(0.25, 0.25, 0.05, 0.95)),
+                GOLD,
+            ),
+            data::ShrineKind::Storm => (
+                BorderColor::all(Color::srgb(0.3, 0.7, 1.0)),
+                BackgroundColor(Color::srgba(0.05, 0.15, 0.3, 0.95)),
+                Color::srgb(0.6, 0.9, 1.0),
+            ),
+            data::ShrineKind::Greed => (
+                BorderColor::all(Color::srgb(1.0, 0.7, 0.1)),
+                BackgroundColor(Color::srgba(0.3, 0.2, 0.05, 0.95)),
+                Color::srgb(1.0, 0.85, 0.2),
+            ),
+        };
+        (Display::Flex, msg, col, border, bg)
+    } else {
+        (
+            Display::None,
+            String::new(),
+            GOLD,
+            BorderColor::all(EDGE),
+            BackgroundColor(BUTTON),
+        )
+    };
+
+    if let Ok((mut node, mut b_col, mut b_bg)) = status.single_mut() {
+        if node.display != display {
+            node.display = display;
+        }
+        if *b_col != border {
+            *b_col = border;
+        }
+        if *b_bg != bg {
+            *b_bg = bg;
+        }
+    }
+    if let Ok((mut t, mut col)) = text.single_mut() {
+        if **t != msg {
+            **t = msg;
+        }
+        if col.0 != color {
+            col.0 = color;
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(super) fn refresh_boss_bar(
+    phase: Res<State<Phase>>,
+    enemies: Query<(&Enemy, &Transform), (With<Enemy>, Without<Hero>)>,
+    hero: Query<&Transform, With<Hero>>,
+    mut frame: Query<&mut Visibility, With<BossFrame>>,
+    mut name_text: Query<
+        &mut Text,
+        (
+            With<BossNameText>,
+            Without<BossHpText>,
+            Without<BossCastText>,
+        ),
+    >,
+    mut hp_fill: Query<&mut Node, (With<BossHpFill>, Without<BossCastFill>)>,
+    mut hp_text: Query<
+        &mut Text,
+        (
+            With<BossHpText>,
+            Without<BossNameText>,
+            Without<BossCastText>,
+        ),
+    >,
+    mut cast_frame: Query<&mut Visibility, (With<BossCastFrame>, Without<BossFrame>)>,
+    mut cast_fill: Query<&mut Node, (With<BossCastFill>, Without<BossHpFill>)>,
+    mut cast_text: Query<
+        &mut Text,
+        (
+            With<BossCastText>,
+            Without<BossNameText>,
+            Without<BossHpText>,
+        ),
+    >,
+) {
+    let Ok(mut frame_vis) = frame.single_mut() else {
+        return;
+    };
+    if *phase.get() != Phase::Playing && *phase.get() != Phase::LevelUp {
+        *frame_vis = Visibility::Hidden;
+        return;
+    }
+
+    let hero_pos = hero.single().map(|t| t.translation).unwrap_or(Vec3::ZERO);
+
+    // Primary living boss (closest to hero)
+    let boss = enemies
+        .iter()
+        .filter(|(e, _)| e.boss && !e.dead && e.hp > 0.0)
+        .min_by(|(_, t1), (_, t2)| {
+            let d1 = t1.translation.distance_squared(hero_pos);
+            let d2 = t2.translation.distance_squared(hero_pos);
+            d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+    let Some((boss, _)) = boss else {
+        *frame_vis = Visibility::Hidden;
+        return;
+    };
+
+    *frame_vis = Visibility::Inherited;
+
+    if let Ok(mut t) = name_text.single_mut() {
+        if **t != boss.def.name {
+            **t = boss.def.name.to_string();
+        }
+    }
+
+    let hp_pct = (boss.hp / boss.max_hp * 100.0).clamp(0.0, 100.0);
+    if let Ok(mut node) = hp_fill.single_mut() {
+        node.width = Val::Percent(hp_pct);
+    }
+    if let Ok(mut t) = hp_text.single_mut() {
+        let text = format!(
+            "{}/{} ({:.0}%)",
+            boss.hp.ceil() as u32,
+            boss.max_hp.ceil() as u32,
+            hp_pct
+        );
+        if **t != text {
+            **t = text;
+        }
+    }
+
+    if let Ok(mut cast_vis) = cast_frame.single_mut() {
+        if boss.cast_t > 0.0 && boss.current_ability.is_some() {
+            let ability = boss.current_ability.unwrap();
+            *cast_vis = Visibility::Inherited;
+            let cast_pct =
+                ((ability.windup - boss.cast_t) / ability.windup * 100.0).clamp(0.0, 100.0);
+            if let Ok(mut fill_node) = cast_fill.single_mut() {
+                fill_node.width = Val::Percent(cast_pct);
+            }
+            if let Ok(mut t) = cast_text.single_mut() {
+                let text = format!("{} {:.1}s", ability.name, boss.cast_t);
+                if **t != text {
+                    **t = text;
+                }
+            }
+        } else {
+            *cast_vis = Visibility::Hidden;
+        }
+    }
+}
+
 /// The mobility button: shown once learned, its icon the class's spell, its sweep the cooldown.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_mobility(
@@ -1441,6 +2707,74 @@ pub(super) fn refresh_mobility(
                 m.sweep = f;
             }
         }
+    }
+}
+
+pub(super) fn refresh_draft_buttons(
+    run: Res<Run>,
+    mut draft_texts: ParamSet<(
+        Query<(&mut Text, &mut TextColor), With<DraftRerollText>>,
+        Query<(&mut Text, &mut TextColor), With<DraftSkipText>>,
+        Query<(&mut Text, &mut TextColor), With<DraftBanishText>>,
+    )>,
+    mut draft_btns: ParamSet<(
+        Query<&mut BorderColor, With<DraftRerollBtn>>,
+        Query<&mut BorderColor, With<DraftSkipBtn>>,
+        Query<&mut BorderColor, With<DraftBanishBtn>>,
+    )>,
+    flash: Option<Res<cards::BanishFlash>>,
+) {
+    let flashing = flash.as_ref().is_some_and(|f| f.0 > 0.0);
+    if !run.is_changed() && !flash.as_ref().is_some_and(|f| f.is_changed()) {
+        return;
+    }
+    if let Ok((mut txt, mut col)) = draft_texts.p0().single_mut() {
+        let label = format!("[R] Reroll ({})", run.rerolls);
+        if **txt != label {
+            **txt = label;
+        }
+        col.0 = if run.rerolls > 0 { GOLD } else { DIM };
+    }
+    if let Ok(mut border) = draft_btns.p0().single_mut() {
+        *border = BorderColor::all(if run.rerolls > 0 {
+            EDGE
+        } else {
+            Color::srgba(0.2, 0.2, 0.2, 0.5)
+        });
+    }
+    if let Ok((mut txt, mut col)) = draft_texts.p1().single_mut() {
+        let label = format!("[X] Skip ({})", run.skips);
+        if **txt != label {
+            **txt = label;
+        }
+        col.0 = if run.skips > 0 {
+            Color::srgb(0.7, 0.9, 1.0)
+        } else {
+            DIM
+        };
+    }
+    if let Ok(mut border) = draft_btns.p1().single_mut() {
+        *border = BorderColor::all(if run.skips > 0 {
+            EDGE
+        } else {
+            Color::srgba(0.2, 0.2, 0.2, 0.5)
+        });
+    }
+    if let Ok((mut txt, mut col)) = draft_texts.p2().single_mut() {
+        let label = format!("[B] Banish ({})", run.banishes);
+        if **txt != label {
+            **txt = label;
+        }
+        col.0 = if run.banishes > 0 { GOLD } else { DIM };
+    }
+    if let Ok(mut border) = draft_btns.p2().single_mut() {
+        *border = BorderColor::all(if flashing {
+            Color::srgb(1.0, 0.2, 0.05)
+        } else if run.banishes > 0 {
+            EDGE
+        } else {
+            Color::srgba(0.2, 0.2, 0.2, 0.5)
+        });
     }
 }
 
@@ -1640,17 +2974,285 @@ impl TipLine {
     }
 }
 
-/// A number as the tooltips print it: whole when near enough, else to one decimal.
+fn spell_school_or_class_color(spell_key: &str, class_color: u32) -> Color {
+    let lower = spell_key.to_ascii_lowercase();
+    if lower.contains("frost") || lower.contains("blizzard") || lower.contains("cone of cold") {
+        Color::srgba(0.28, 0.65, 0.95, 0.38)
+    } else if lower.contains("fire")
+        || lower.contains("pyro")
+        || lower.contains("flame")
+        || lower.contains("immolate")
+        || lower.contains("hellfire")
+    {
+        Color::srgba(0.95, 0.38, 0.12, 0.38)
+    } else if lower.contains("shadow")
+        || lower.contains("corruption")
+        || lower.contains("pain")
+        || lower.contains("death")
+        || lower.contains("agony")
+    {
+        Color::srgba(0.65, 0.28, 0.92, 0.38)
+    } else if lower.contains("holy")
+        || lower.contains("smite")
+        || lower.contains("consecration")
+        || lower.contains("judgement")
+        || lower.contains("heal")
+    {
+        Color::srgba(0.95, 0.88, 0.35, 0.38)
+    } else if lower.contains("arcane") || lower.contains("missile") || lower.contains("explosion") {
+        Color::srgba(0.92, 0.42, 0.85, 0.38)
+    } else if lower.contains("nature")
+        || lower.contains("lightning")
+        || lower.contains("wrath")
+        || lower.contains("poison")
+        || lower.contains("swarm")
+    {
+        Color::srgba(0.32, 0.88, 0.38, 0.38)
+    } else {
+        let r = ((class_color >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((class_color >> 8) & 0xFF) as f32 / 255.0;
+        let b = (class_color & 0xFF) as f32 / 255.0;
+        Color::srgba(r, g, b, 0.38)
+    }
+}
+
+pub(super) fn refresh_meter(
+    mut commands: Commands,
+    run: Res<Run>,
+    time: Res<Time>,
+    font: Res<HudFont>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    mut roots: ParamSet<(
+        Query<(&mut Visibility, &mut Node), With<MeterRoot>>,
+        Query<(&mut Visibility, &mut Node), With<MeterBadge>>,
+    )>,
+    mut labels: Query<(&mut Text, Has<MeterSortLabel>, Has<MeterBadgeText>)>,
+    rows_query: Query<Entity, With<MeterRows>>,
+    mut last_version: Local<u32>,
+    mut last_sort: Local<super::MeterSort>,
+    mut last_state: Local<super::MeterState>,
+    mut timer: Local<f32>,
+) {
+    let dt = time.delta_secs();
+    *timer += dt;
+
+    let state_changed = *last_state != run.meter.state;
+    let sort_changed = *last_sort != run.meter.sort;
+    let version_changed = *last_version != run.meter.version;
+    let tick = *timer >= 0.3;
+
+    if !state_changed && !sort_changed && !version_changed && !tick {
+        return;
+    }
+    if tick {
+        *timer = 0.0;
+    }
+    *last_version = run.meter.version;
+    *last_sort = run.meter.sort;
+    *last_state = run.meter.state;
+
+    let is_expanded = run.meter.state == super::MeterState::Expanded;
+    let is_mini = run.meter.state == super::MeterState::Mini;
+
+    for (mut vis, mut node) in &mut roots.p0() {
+        let want = if is_expanded {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+        let d = if is_expanded { Display::Flex } else { Display::None };
+        if node.display != d {
+            node.display = d;
+        }
+    }
+    for (mut vis, mut node) in &mut roots.p1() {
+        let want = if is_mini {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+        let d = if is_mini { Display::Flex } else { Display::None };
+        if node.display != d {
+            node.display = d;
+        }
+    }
+
+    for (mut text_val, is_sort, is_badge) in &mut labels {
+        if is_sort {
+            let s = match run.meter.sort {
+                super::MeterSort::Damage => "Sort: Dmg",
+                super::MeterSort::Dps => "Sort: DPS",
+                super::MeterSort::Kills => "Sort: Kills",
+            };
+            if **text_val != s {
+                **text_val = s.to_string();
+            }
+        } else if is_badge {
+            let total_dps = run.damage_done / f64::from(run.elapsed.max(1.0));
+            let s = format!("⚡ Meter: {} DPS  [M]", compact(total_dps));
+            if **text_val != s {
+                **text_val = s;
+            }
+        }
+    }
+
+    if !is_expanded {
+        return;
+    }
+
+    let Ok(rows_ent) = rows_query.single() else {
+        return;
+    };
+    commands.entity(rows_ent).despawn_related::<Children>();
+
+    let f = &font.0;
+    let entries = run.meter.sorted_entries(run.elapsed);
+    let top_damage = entries.first().map_or(1.0, |e| e.damage.max(1.0));
+
+    commands.entity(rows_ent).with_children(|container| {
+        if entries.is_empty() {
+            container.spawn((
+                Node {
+                    padding: UiRect::all(Val::Px(6.0)),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                text(f, "Cast spells to see damage...", 11.0, DIM),
+            ));
+            return;
+        }
+
+        for (idx, stat) in entries.into_iter().take(8).enumerate() {
+            let share = if run.damage_done > 0.0 {
+                stat.damage / run.damage_done
+            } else {
+                0.0
+            };
+            let bar_pct = (stat.damage / top_damage * 100.0).clamp(0.0, 100.0) as f32;
+            let dps = stat.damage / f64::from(run.elapsed.max(1.0));
+            let name = spell_name(spells.as_deref(), stat.spell, stat.key);
+            let bar_color = spell_school_or_class_color(stat.key, run.class.color);
+
+            container
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(20.0),
+                        position_type: PositionType::Relative,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        padding: UiRect::horizontal(Val::Px(4.0)),
+                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.08, 0.06, 0.05, 0.6)),
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            bottom: Val::Px(0.0),
+                            width: Val::Percent(bar_pct),
+                            ..default()
+                        },
+                        BackgroundColor(bar_color),
+                    ));
+
+                    row.spawn(Node {
+                        width: Val::Px(104.0),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(3.0),
+                        ..default()
+                    })
+                    .with_children(|left| {
+                        left.spawn((
+                            Text::new(format!("{}.", idx + 1)),
+                            TextFont {
+                                font: f.clone(),
+                                font_size: 10.0,
+                                ..default()
+                            },
+                            TextColor(DIM),
+                            TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                        ));
+                        left.spawn(icon(stat.spell, 15.0));
+                        left.spawn((
+                            Text::new(name),
+                            TextFont {
+                                font: f.clone(),
+                                font_size: 11.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                            TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                        ));
+                    });
+
+                    row.spawn((
+                        Node {
+                            width: Val::Px(36.0),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        text(f, stat.kills.to_string(), 11.0, Color::srgb(0.7, 0.9, 1.0)),
+                    ));
+
+                    row.spawn((
+                        Node {
+                            width: Val::Px(52.0),
+                            justify_content: JustifyContent::FlexEnd,
+                            ..default()
+                        },
+                        text(f, compact(stat.damage), 11.0, GOLD),
+                    ));
+
+                    row.spawn((
+                        Node {
+                            width: Val::Px(48.0),
+                            justify_content: JustifyContent::FlexEnd,
+                            ..default()
+                        },
+                        text(f, compact(dps), 11.0, Color::srgb(1.0, 0.72, 0.4)),
+                    ));
+
+                    row.spawn((
+                        Node {
+                            width: Val::Px(34.0),
+                            justify_content: JustifyContent::FlexEnd,
+                            ..default()
+                        },
+                        text(f, format!("{:.0}%", share * 100.0), 10.0, DIM),
+                    ));
+                });
+        }
+    });
+}
 
 /// The results screen's tiles and its line under the title.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_results(
     run: Res<Run>,
     selection: Res<Selection>,
+    font: Res<HudFont>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    mut commands: Commands,
+    over_meter_rows: Query<Entity, With<OverMeterRows>>,
     mut over_texts: ParamSet<(
         Query<(&OverStat, &mut Text)>,
         Query<&mut Text, With<OverLine>>,
+        Query<&mut Text, With<OverStats>>,
     )>,
+    mut last_populated: Local<Option<u32>>,
 ) {
     let secs = run.elapsed as u32;
     let stats_line = if run.won {
@@ -1675,6 +3277,170 @@ pub(super) fn refresh_results(
     if let Ok(mut t) = over_texts.p1().single_mut() {
         if **t != stats_line {
             **t = stats_line.to_string();
+        }
+    }
+    let affixes_str = if run.affixes.active_count() > 0 {
+        format!("   —   [Affixes: +{}% Bonus]", run.affixes.bonus_percent())
+    } else {
+        String::new()
+    };
+    let stats = if run.overtime {
+        let ot_secs = (run.elapsed - data::VICTORY_SECS).max(0.0) as u32;
+        format!(
+            "{} {} in {} (Overtime +{:02}:{:02})   —   Gold Gained: +{}g{}   —   press Enter to play again",
+            crate::char_select::race_name(run.race),
+            run.class.name,
+            selection.map_def().name,
+            ot_secs / 60,
+            ot_secs % 60,
+            run.gold,
+            affixes_str,
+        )
+    } else {
+        format!(
+            "{} {} in {}{}   —   Gold Gained: +{}g   —   press Enter to play again",
+            crate::char_select::race_name(run.race),
+            run.class.name,
+            selection.map_def().name,
+            affixes_str,
+            run.gold,
+        )
+    };
+    if let Ok(mut t) = over_texts.p2().single_mut() {
+        if **t != stats {
+            **t = stats;
+        }
+    }
+
+    if *last_populated != Some(run.meter.version) {
+        *last_populated = Some(run.meter.version);
+        if let Ok(rows_ent) = over_meter_rows.single() {
+            commands.entity(rows_ent).despawn_related::<Children>();
+            let f = &font.0;
+            let entries = run.meter.sorted_entries(run.elapsed);
+            let top_damage = entries.first().map_or(1.0, |e| e.damage.max(1.0));
+
+            commands.entity(rows_ent).with_children(|container| {
+                if entries.is_empty() {
+                    container.spawn((
+                        Node {
+                            padding: UiRect::all(Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        text(f, "No spell damage recorded.", 11.0, DIM),
+                    ));
+                    return;
+                }
+
+                for (idx, stat) in entries.into_iter().take(8).enumerate() {
+                    let share = if run.damage_done > 0.0 {
+                        stat.damage / run.damage_done
+                    } else {
+                        0.0
+                    };
+                    let bar_pct = (stat.damage / top_damage * 100.0).clamp(0.0, 100.0) as f32;
+                    let dps = stat.damage / f64::from(run.elapsed.max(1.0));
+                    let name = spell_name(spells.as_deref(), stat.spell, stat.key);
+                    let bar_color = spell_school_or_class_color(stat.key, run.class.color);
+
+                    container
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(22.0),
+                                position_type: PositionType::Relative,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::SpaceBetween,
+                                padding: UiRect::horizontal(Val::Px(6.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.08, 0.06, 0.05, 0.6)),
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                bottom: Val::Px(0.0),
+                                width: Val::Percent(bar_pct),
+                                ..default()
+                            },
+                            BackgroundColor(bar_color),
+                        ));
+
+                        row.spawn(Node {
+                            width: Val::Px(160.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(5.0),
+                            ..default()
+                        })
+                        .with_children(|left| {
+                            left.spawn((
+                                Text::new(format!("{}.", idx + 1)),
+                                TextFont {
+                                    font: f.clone(),
+                                    font_size: 11.0,
+                                    ..default()
+                                },
+                                TextColor(DIM),
+                                TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                            ));
+                            left.spawn(icon(stat.spell, 16.0));
+                            left.spawn((
+                                Text::new(name),
+                                TextFont {
+                                    font: f.clone(),
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                                TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                            ));
+                        });
+
+                        row.spawn((
+                            Node {
+                                width: Val::Px(60.0),
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            text(f, format!("{} kills", stat.kills), 11.0, Color::srgb(0.7, 0.9, 1.0)),
+                        ));
+
+                        row.spawn((
+                            Node {
+                                width: Val::Px(80.0),
+                                justify_content: JustifyContent::FlexEnd,
+                                ..default()
+                            },
+                            text(f, compact(stat.damage), 12.0, GOLD),
+                        ));
+
+                        row.spawn((
+                            Node {
+                                width: Val::Px(70.0),
+                                justify_content: JustifyContent::FlexEnd,
+                                ..default()
+                            },
+                            text(f, format!("{} DPS", compact(dps)), 11.0, Color::srgb(1.0, 0.72, 0.4)),
+                        ));
+
+                        row.spawn((
+                            Node {
+                                width: Val::Px(50.0),
+                                justify_content: JustifyContent::FlexEnd,
+                                ..default()
+                            },
+                            text(f, format!("{:.1}%", share * 100.0), 11.0, DIM),
+                        ));
+                    });
+                }
+            });
         }
     }
 }
@@ -2223,5 +3989,70 @@ pub(super) fn show_panels(
     }
     for root in &mut roots.p4() {
         set(root, p == Phase::GameOver);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_draft_banish_filtering() {
+        let mut run = Run::default();
+        assert_eq!(run.banishes, 2);
+        assert!(run.banished.is_empty());
+
+        let mut rng = Rng::default();
+        let mut offer = Offer::default();
+        offer.choices = choices_for(&run, &mut rng);
+        assert!(!offer.choices.is_empty());
+
+        // Banish the first card
+        let banished_name = banish(&mut run, &mut offer, &mut rng, 0).expect("should banish");
+        assert_eq!(run.banishes, 1);
+        assert!(!run.banished.is_empty());
+        assert!(run.banished.contains(&banished_name));
+
+        // Check that choices_for does not contain the banished item
+        for _ in 0..20 {
+            let choices = choices_for(&run, &mut rng);
+            for c in choices {
+                match c {
+                    Choice::NewAbility(def) => {
+                        assert_ne!(def.name, banished_name);
+                        assert_ne!(def.key, banished_name);
+                    }
+                    Choice::Upgrade(k) => {
+                        let o = &run.abilities[k];
+                        assert_ne!(o.def.name, banished_name);
+                        assert_ne!(o.def.key, banished_name);
+                    }
+                    Choice::NewPassive(p) => {
+                        assert_ne!(p.name, banished_name);
+                        assert_ne!(p.key, banished_name);
+                    }
+                    Choice::UpPassive(k) => {
+                        let (p, _) = run.passives[k];
+                        assert_ne!(p.name, banished_name);
+                        assert_ne!(p.key, banished_name);
+                    }
+                    Choice::Heal => {}
+                    Choice::Evolution(evo) => {
+                        assert_ne!(evo.evolved_name, banished_name);
+                        assert_ne!(evo.base_ability, banished_name);
+                    }
+                }
+            }
+        }
+
+        // Banish again (second banish)
+        let second_banished = banish(&mut run, &mut offer, &mut rng, 0).expect("should banish");
+        assert_eq!(run.banishes, 0);
+        assert!(run.banished.contains(&second_banished));
+
+        // Attempting a third banish when banishes == 0 fails
+        let third = banish(&mut run, &mut offer, &mut rng, 0);
+        assert!(third.is_none());
+        assert_eq!(run.banishes, 0);
     }
 }

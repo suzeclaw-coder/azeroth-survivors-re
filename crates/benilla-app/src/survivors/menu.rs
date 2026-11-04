@@ -9,13 +9,15 @@ use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
 
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
+use super::save::{self, UpgradeKind};
 use super::{data, Phase, Rng, Run, Selection};
 use crate::char_select::race_name;
-use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
+use super::traits;
+use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, BTN_BG, BUTTON_TC, DIM, GOLD, NAME_EDGE};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
 use crate::glue::widgets::{
-    abs, glue_button, icon_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText, Hilight,
-    HoverLabel, LockHighlight,
+    abs, glue_button, icon_button, outlined_text, overlay, FallbackFace, GlueBtn, GlueBtnKind,
+    GlueDisabled, GlueText, Hilight, HoverLabel, LockHighlight,
 };
 use crate::glue::GlueClicks;
 
@@ -31,10 +33,10 @@ const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.85);
 /// would start: there is nothing to customise here.
 const TOWER_H: f32 = 590.0;
 
-/// The zone rows: the character-select row, compacted so every zone fits the 642-tall frame.
+/// The zone rows: the character-select row, compacted so every zone fits the frame.
 const ROW_TOP: f32 = 44.0;
-const ROW_PITCH: f32 = 36.0;
-const ROW_H: f32 = 34.0;
+const ROW_PITCH: f32 = 32.0;
+const ROW_H: f32 = 30.0;
 const ROW_W: f32 = 228.0;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -45,11 +47,30 @@ pub(super) enum MenuAction {
     Map(usize),
     Randomize,
     Enter,
+    CycleDifficulty,
+    CycleAffixes,
+    Upgrade(UpgradeKind),
+    RefundUpgrades,
 }
 
 /// On [`MenuRoot`] once the glue art is in and the screen is built.
 #[derive(Component)]
 pub(super) struct MenuBuilt;
+
+#[derive(Component)]
+pub(super) struct TowerGoldText;
+
+#[derive(Component)]
+pub(super) struct ArmoryGoldText;
+
+#[derive(Component)]
+pub(super) struct UpgradeRankText(pub(super) UpgradeKind);
+
+#[derive(Component)]
+pub(super) struct UpgradeBtnText(pub(super) UpgradeKind);
+
+#[derive(Component)]
+pub(super) struct UpgradeBonusText(pub(super) UpgradeKind);
 
 /// A race button's face, re-cropped to the picked gender.
 #[derive(Component)]
@@ -58,8 +79,36 @@ pub(super) struct RaceFace(u8);
 #[derive(Component)]
 pub(super) struct PickName;
 
+#[derive(Component)]
+pub(super) struct RacialTraitText;
+
+#[derive(Component)]
+pub(super) struct DifficultyText;
+
+#[derive(Component)]
+pub(super) struct AffixText;
+
+pub(super) fn difficulty_color(diff: data::Difficulty) -> Color {
+    match diff {
+        data::Difficulty::Normal => Color::WHITE,
+        data::Difficulty::Heroic => Color::srgb(0.0, 0.44, 0.87),
+        data::Difficulty::Mythic => Color::srgb(0.64, 0.21, 0.93),
+        data::Difficulty::Nightmare => Color::srgb(0.95, 0.15, 0.15),
+    }
+}
+
+pub(super) fn affix_color(affixes: &data::ChallengeAffixes) -> Color {
+    match affixes.active_count() {
+        0 => Color::srgb(0.75, 0.75, 0.75),
+        1 => Color::srgb(0.2, 0.9, 0.5),
+        2 => Color::srgb(0.95, 0.75, 0.2),
+        3 => Color::srgb(1.0, 0.5, 0.1),
+        _ => Color::srgb(1.0, 0.25, 0.35),
+    }
+}
+
 /// The saved pick, `benilla-config/survivors-pick.txt` (`localStorage` on the page):
-/// `class race sex map`, restored at the menu so a reload keeps the last hero and zone.
+/// `class race sex map diff_idx affix_idx`, restored at the menu so a reload keeps the last hero and zone.
 fn pick_path() -> Option<std::path::PathBuf> {
     crate::local_state::home().map(|h| h.join("survivors-pick.txt"))
 }
@@ -69,9 +118,18 @@ fn save_pick(sel: &Selection) {
     else {
         return;
     };
+    let diff_idx = match sel.difficulty {
+        data::Difficulty::Normal => 0,
+        data::Difficulty::Heroic => 1,
+        data::Difficulty::Mythic => 2,
+        data::Difficulty::Nightmare => 3,
+    };
+    let affix_idx = sel.affixes.preset_idx();
     if let Some(path) = pick_path() {
-        let _ =
-            crate::local_state::write_atomic(&path, &format!("{class} {race} {sex} {}", sel.map));
+        let _ = crate::local_state::write_atomic(
+            &path,
+            &format!("{class} {race} {sex} {} {diff_idx} {affix_idx}", sel.map),
+        );
     }
 }
 
@@ -96,9 +154,20 @@ pub(super) fn restore_pick(
         .split_whitespace()
         .filter_map(|t| t.parse().ok())
         .collect();
-    let [class, race, sex, map] = v[..] else {
+    if v.len() < 4 {
         return;
+    }
+    let (class, race, sex, map) = (v[0], v[1], v[2], v[3]);
+    let difficulty = match v.get(4).copied() {
+        Some(1) => data::Difficulty::Heroic,
+        Some(2) => data::Difficulty::Mythic,
+        Some(3) => data::Difficulty::Nightmare,
+        _ => data::Difficulty::Normal,
     };
+    selection.difficulty = difficulty;
+    if let Some(&affix_idx) = v.get(5) {
+        selection.affixes = data::ChallengeAffixes::from_preset(affix_idx);
+    }
     if map < data::MAPS.len() {
         selection.map = map;
         selection.stage = map;
@@ -142,13 +211,16 @@ pub(super) fn build_menu(
     mut images: ResMut<Assets<Image>>,
     mut add_mats: ResMut<Assets<crate::glue::add_material::AddUiMaterial>>,
     font: Res<HudFont>,
+    selection: Res<Selection>,
+    account: Res<save::Account>,
 ) {
     let Ok(root) = roots.single() else { return };
     let Some(mut assets) = assets else { return };
     art.ensure_loaded(&mut assets, &mut images, &mut add_mats);
     let f = &font.0;
     commands.entity(root).insert(MenuBuilt).with_children(|ui| {
-        tower(ui, &art, f);
+        tower(ui, &art, f, &account);
+        armory_frame(ui, &art, f, &account);
         // `CharacterCreateWoWLogo`, 256×128 at TOPLEFT (3,-7), after the tower so it draws over
         // the border art, as the create screen orders it.
         if let Some(logo) = &art.logo {
@@ -157,12 +229,12 @@ pub(super) fn build_menu(
                 abs(1.0, 3.0, 7.0, 256.0, 128.0),
             ));
         }
-        zone_frame(ui, &art, f);
+        zone_frame(ui, &art, f, &selection);
 
-        // `CharSelectCharacterName`, GlueFontNormalHuge at BOTTOM (0,100).
+        // `CharSelectCharacterName`, GlueFontNormalHuge at BOTTOM (0,120).
         ui.spawn(Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(100.0),
+            bottom: Val::Px(120.0),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             ..default()
@@ -177,6 +249,31 @@ pub(super) fn build_menu(
                     text: "",
                     size: 22.0,
                     color: GOLD,
+                    wrap: false,
+                },
+                f,
+                1.0,
+            );
+        });
+
+        // `CharSelectRacialTrait`, at BOTTOM (0,96).
+        ui.spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(96.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|c| {
+            outlined_text(
+                c,
+                Node::default(),
+                (),
+                RacialTraitText,
+                GlueText {
+                    text: "",
+                    size: 14.0,
+                    color: Color::srgb(0.9, 0.85, 0.55),
                     wrap: false,
                 },
                 f,
@@ -209,7 +306,12 @@ pub(super) fn build_menu(
 
 /// `CharacterCreateConfigurationFrame`, 206×600 at TOPLEFT (28,-74): the race columns under the
 /// faction banners, the gender pair, the class grid, the class text and Randomize.
-fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+fn tower(
+    ui: &mut ChildSpawnerCommands,
+    art: &GlueArt,
+    f: &Handle<Font>,
+    account: &save::Account,
+) {
     let px = Val::Px;
     ui.spawn(Node {
         position_type: PositionType::Absolute,
@@ -257,6 +359,26 @@ fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                 abs(1.0, -27.0, 60.0, 256.0, 259.0),
             ));
         }
+
+        // Account gold display in the tower header
+        outlined_text(
+            tower,
+            Node {
+                justify_content: JustifyContent::Center,
+                ..abs(1.0, 10.0, 14.0, 186.0, 18.0)
+            },
+            (),
+            TowerGoldText,
+            GlueText {
+                text: &format!("Gold: {}g", account.gold),
+                size: 15.0,
+                color: GOLD,
+                wrap: false,
+            },
+            f,
+            1.0,
+        );
+
         for (label, center) in [("Alliance", 51.0), ("Horde", 151.0)] {
             outlined_text(
                 tower,
@@ -398,7 +520,12 @@ fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
 
 /// The zone list in `CharacterSelectCharacterFrame` (260×642 at TOPRIGHT (-5,-15)), one
 /// character-row per zone, lowest level first.
-fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+fn zone_frame(
+    ui: &mut ChildSpawnerCommands,
+    art: &GlueArt,
+    f: &Handle<Font>,
+    selection: &Selection,
+) {
     let px = Val::Px;
     let mut order: Vec<(usize, u32, u32)> = (0..data::MAPS.len())
         .map(|i| {
@@ -415,7 +542,7 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
         right: px(5.0),
         top: px(15.0),
         width: px(260.0),
-        height: px(642.0),
+        height: px(696.0),
         ..default()
     })
     .with_children(|frame| {
@@ -515,6 +642,419 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                     );
                 });
         }
+
+        let diff = selection.difficulty;
+        let affixes = selection.affixes;
+        let kind = GlueBtnKind::Normal;
+
+        // Challenge Affixes Cycle Button
+        let mut b_affix = frame.spawn((
+            MenuAction::CycleAffixes,
+            GlueBtn,
+            GlueDisabled(false),
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(24.0),
+                bottom: px(56.0),
+                width: px(ROW_W),
+                height: px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ));
+        let tc = kind.tex_coords();
+        if let Some(tc) = tc {
+            b_affix.insert(tc);
+        }
+        match &art.button_up {
+            Some((up, size)) => {
+                b_affix.insert(ImageNode {
+                    image: up.clone(),
+                    rect: Some(tc_rect(*size, tc.map(|t| t.0).unwrap_or(BUTTON_TC))),
+                    ..default()
+                });
+            }
+            None => {
+                b_affix.insert((FallbackFace, BackgroundColor(BTN_BG)));
+            }
+        }
+        b_affix.with_children(|inner| {
+            if let Some(hi) = &art.button_hi {
+                inner.spawn((
+                    Hilight,
+                    Visibility::Hidden,
+                    MaterialNode(hi.clone()),
+                    overlay(),
+                ));
+            }
+            let (font_size, offset) = kind.caption();
+            outlined_text(
+                inner,
+                Node {
+                    left: Val::Px(offset.x),
+                    top: Val::Px(1.0 - offset.y),
+                    ..default()
+                },
+                (),
+                AffixText,
+                GlueText {
+                    text: &affixes.label(),
+                    size: font_size - 1.0,
+                    color: affix_color(&affixes),
+                    wrap: false,
+                },
+                f,
+                1.0,
+            );
+        });
+
+        // Difficulty Cycle Button
+        let mut b = frame.spawn((
+            MenuAction::CycleDifficulty,
+            GlueBtn,
+            GlueDisabled(false),
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(24.0),
+                bottom: px(14.0),
+                width: px(ROW_W),
+                height: px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ));
+        let tc = kind.tex_coords();
+        if let Some(tc) = tc {
+            b.insert(tc);
+        }
+        match &art.button_up {
+            Some((up, size)) => {
+                b.insert(ImageNode {
+                    image: up.clone(),
+                    rect: Some(tc_rect(*size, tc.map(|t| t.0).unwrap_or(BUTTON_TC))),
+                    ..default()
+                });
+            }
+            None => {
+                b.insert((FallbackFace, BackgroundColor(BTN_BG)));
+            }
+        }
+        b.with_children(|inner| {
+            if let Some(hi) = &art.button_hi {
+                inner.spawn((
+                    Hilight,
+                    Visibility::Hidden,
+                    MaterialNode(hi.clone()),
+                    overlay(),
+                ));
+            }
+            let (font_size, offset) = kind.caption();
+            outlined_text(
+                inner,
+                Node {
+                    left: Val::Px(offset.x),
+                    top: Val::Px(1.0 - offset.y),
+                    ..default()
+                },
+                (),
+                DifficultyText,
+                GlueText {
+                    text: &format!("Difficulty: {}", diff.name()),
+                    size: font_size,
+                    color: difficulty_color(diff),
+                    wrap: false,
+                },
+                f,
+                1.0,
+            );
+        });
+    });
+}
+
+fn current_bonus_str(kind: UpgradeKind, rank: u8) -> String {
+    match kind {
+        UpgradeKind::Might => format!("Current: +{:.0}% damage", rank as f32 * 5.0),
+        UpgradeKind::Vitality => format!("Current: +{:.0}% max HP", rank as f32 * 10.0),
+        UpgradeKind::Haste => format!("Current: +{:.0}% haste/CDR", rank as f32 * 5.0),
+        UpgradeKind::Magnet => format!("Current: +{:.1} yd radius", rank as f32 * 1.5),
+        UpgradeKind::DashCd => format!("Current: -{:.1}s dash cooldown", rank as f32 * 0.3),
+        UpgradeKind::Greed => format!("Current: +{:.0}% gold/XP", rank as f32 * 10.0),
+        UpgradeKind::Channeler => format!("Current: +{:.0}% ultimate charge", rank as f32 * 10.0),
+        UpgradeKind::Fortune => format!("Current: +{:.0}% chest luck & card rarity", rank as f32 * 5.0),
+    }
+}
+
+fn armory_btn<T: Bundle>(
+    parent: &mut ChildSpawnerCommands,
+    art: &GlueArt,
+    font: &Handle<Font>,
+    action: MenuAction,
+    tag: T,
+    caption: &str,
+    left: f32,
+    top: f32,
+    w: f32,
+    h: f32,
+) {
+    let px = Val::Px;
+    let kind = GlueBtnKind::Small;
+    let mut b = parent.spawn((
+        action,
+        GlueBtn,
+        GlueDisabled(false),
+        Button,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(left),
+            top: px(top),
+            width: px(w),
+            height: px(h),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    ));
+    let tc = kind.tex_coords();
+    if let Some(tc) = tc {
+        b.insert(tc);
+    }
+    match &art.button_up {
+        Some((up, size)) => {
+            b.insert(ImageNode {
+                image: up.clone(),
+                rect: Some(tc_rect(*size, tc.map(|t| t.0).unwrap_or(BUTTON_TC))),
+                ..default()
+            });
+        }
+        None => {
+            b.insert((FallbackFace, BackgroundColor(BTN_BG)));
+        }
+    }
+    b.with_children(|inner| {
+        if let Some(hi) = &art.button_hi {
+            inner.spawn((
+                Hilight,
+                Visibility::Hidden,
+                MaterialNode(hi.clone()),
+                overlay(),
+            ));
+        }
+        let (font_size, offset) = kind.caption();
+        outlined_text(
+            inner,
+            Node {
+                left: Val::Px(offset.x),
+                top: Val::Px(1.0 - offset.y),
+                ..default()
+            },
+            (),
+            tag,
+            GlueText {
+                text: caption,
+                size: font_size,
+                color: GOLD,
+                wrap: false,
+            },
+            font,
+            1.0,
+        );
+    });
+}
+
+/// The Armory Upgrades panel, between the character creation tower and the preview hero.
+fn armory_frame(
+    ui: &mut ChildSpawnerCommands,
+    art: &GlueArt,
+    f: &Handle<Font>,
+    account: &save::Account,
+) {
+    let px = Val::Px;
+    ui.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: px(250.0),
+        top: px(74.0),
+        width: px(260.0),
+        height: px(TOWER_H),
+        ..default()
+    })
+    .with_children(|frame| {
+        if let (Some(bg), Some(border)) = (&art.tooltip_bg, &art.name_border) {
+            frame.spawn((
+                tiled_bg_node(bg.clone(), NAME_EDGE, 1.0, FRAME_FILL),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(10.0),
+                    right: px(5.0),
+                    top: px(4.0),
+                    bottom: px(9.0),
+                    ..default()
+                },
+            ));
+            backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
+        } else {
+            frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
+        }
+
+        outlined_text(
+            frame,
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(12.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            (),
+            (),
+            GlueText {
+                text: "Armory Upgrades",
+                size: 18.0,
+                color: GOLD,
+                wrap: false,
+            },
+            f,
+            1.0,
+        );
+
+        outlined_text(
+            frame,
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(34.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            (),
+            ArmoryGoldText,
+            GlueText {
+                text: &format!(
+                    "Gold: {}g  |  Trophies: {}/{}",
+                    account.gold,
+                    account.achievements.len(),
+                    super::achievements::ACHIEVEMENTS.len()
+                ),
+                size: 14.0,
+                color: GOLD,
+                wrap: false,
+            },
+            f,
+            1.0,
+        );
+
+        let row_top = 54.0;
+        let row_pitch = 64.0;
+        let row_w = 236.0;
+
+        for (idx, &kind) in UpgradeKind::ALL.iter().enumerate() {
+            let rank = account.upgrade_rank(kind);
+            let top_y = row_top + idx as f32 * row_pitch;
+
+            frame
+                .spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: px(12.0),
+                    top: px(top_y),
+                    width: px(row_w),
+                    height: px(58.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    let rank_str = format!("{}  [{}/{}]", kind.name(), rank, save::MAX_UPGRADE_RANK);
+                    outlined_text(
+                        row,
+                        abs(1.0, 4.0, 0.0, 140.0, 16.0),
+                        (),
+                        UpgradeRankText(kind),
+                        GlueText {
+                            text: &rank_str,
+                            size: 13.0,
+                            color: GOLD,
+                            wrap: false,
+                        },
+                        f,
+                        1.0,
+                    );
+
+                    let cost_str = match account.upgrade_cost(kind) {
+                        Some(cost) => format!("+ {}g", cost),
+                        None => "MAX".to_string(),
+                    };
+                    armory_btn(
+                        row,
+                        art,
+                        f,
+                        MenuAction::Upgrade(kind),
+                        UpgradeBtnText(kind),
+                        &cost_str,
+                        144.0,
+                        -2.0,
+                        88.0,
+                        26.0,
+                    );
+
+                    outlined_text(
+                        row,
+                        abs(1.0, 4.0, 20.0, row_w, 14.0),
+                        (),
+                        (),
+                        GlueText {
+                            text: kind.description(),
+                            size: 10.5,
+                            color: Color::srgb(0.75, 0.75, 0.75),
+                            wrap: false,
+                        },
+                        f,
+                        1.0,
+                    );
+
+                    let bonus_str = current_bonus_str(kind, rank);
+                    outlined_text(
+                        row,
+                        abs(1.0, 4.0, 36.0, row_w, 14.0),
+                        (),
+                        UpgradeBonusText(kind),
+                        GlueText {
+                            text: &bonus_str,
+                            size: 10.5,
+                            color: Color::srgb(0.5, 0.9, 0.5),
+                            wrap: false,
+                        },
+                        f,
+                        1.0,
+                    );
+                });
+        }
+
+        let refund_btn_w = 210.0;
+        let refund_btn_h = 32.0;
+        let refund_btn_left = (260.0 - refund_btn_w) / 2.0;
+        let refund_btn_top = TOWER_H - 46.0;
+
+        frame
+            .spawn(Node {
+                position_type: PositionType::Absolute,
+                left: px(refund_btn_left),
+                top: px(refund_btn_top),
+                ..default()
+            })
+            .with_children(|r| {
+                glue_button(
+                    r,
+                    art,
+                    f,
+                    MenuAction::RefundUpgrades,
+                    "Refund All",
+                    refund_btn_w,
+                    refund_btn_h,
+                    GlueBtnKind::Small,
+                    1.0,
+                );
+            });
     });
 }
 
@@ -528,6 +1068,7 @@ pub(super) fn menu_clicks(
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    mut account: ResMut<save::Account>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
@@ -556,9 +1097,15 @@ pub(super) fn menu_clicks(
             }
         }
         MenuAction::Enter => {
-            if start_run(&mut run, &mut selection) {
+            if start_run(&mut run, &mut selection, Some(&account)) {
                 next.set(Phase::Playing);
             }
+        }
+        MenuAction::Upgrade(kind) => {
+            account.purchase_upgrade(kind);
+        }
+        MenuAction::RefundUpgrades => {
+            account.refund_upgrades();
         }
         MenuAction::Randomize => {
             let picks: Vec<(usize, usize)> = all
@@ -600,6 +1147,14 @@ pub(super) fn menu_clicks(
                 }
             }
         }
+        MenuAction::CycleDifficulty => {
+            selection.difficulty = selection.difficulty.next();
+            selection.version += 1;
+        }
+        MenuAction::CycleAffixes => {
+            selection.affixes = selection.affixes.next();
+            selection.version += 1;
+        }
     }
     save_pick(&selection);
 }
@@ -611,6 +1166,7 @@ pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
     creatures: Option<Res<crate::entities::Creatures>>,
     art: Res<GlueArt>,
+    account: Res<save::Account>,
     mut buttons: Query<(
         &MenuAction,
         &Interaction,
@@ -622,7 +1178,20 @@ pub(super) fn refresh_menu_ui(
     )>,
     mut labels: Query<&mut Visibility, (With<HoverLabel>, Without<MenuAction>)>,
     mut faces: Query<(&RaceFace, &mut ImageNode)>,
-    mut name: Query<(&mut Text, &mut TextColor), With<PickName>>,
+    mut texts: ParamSet<(
+        Query<(&mut Text, &mut TextColor), With<PickName>>,
+        Query<(&mut Text, &mut TextColor), With<DifficultyText>>,
+        Query<(
+            &mut Text,
+            Option<&TowerGoldText>,
+            Option<&ArmoryGoldText>,
+            Option<&UpgradeRankText>,
+            Option<&UpgradeBtnText>,
+            Option<&UpgradeBonusText>,
+        )>,
+        Query<(&mut Text, &mut TextColor), With<RacialTraitText>>,
+        Query<(&mut Text, &mut TextColor), With<AffixText>>,
+    )>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
 ) {
     let have = creatures.is_some();
@@ -639,13 +1208,23 @@ pub(super) fn refresh_menu_ui(
         .and_then(|i| selection.looks.get(i))
         .map(|&(_, r, s)| (r, s));
 
+    let mut hovered_race = None;
     for (action, interaction, children, lock, disabled, mut node, mut vis) in &mut buttons {
+        if let MenuAction::Race(r) = *action {
+            if *interaction == Interaction::Hovered {
+                hovered_race = Some(r);
+            }
+        }
         let selected = match *action {
             MenuAction::Race(r) => cur.is_some_and(|c| c.0 == r),
             MenuAction::Sex(s) => cur.is_some_and(|c| c.1 == s),
             MenuAction::Class(i) => selection.class == Some(i),
             MenuAction::Map(i) => selection.map == i,
-            MenuAction::Randomize | MenuAction::Enter => false,
+            MenuAction::Randomize
+            | MenuAction::Enter
+            | MenuAction::CycleDifficulty
+            | MenuAction::CycleAffixes => false,
+            MenuAction::Upgrade(_) | MenuAction::RefundUpgrades => false,
         };
         if let Some(mut lock) = lock {
             if lock.0 != selected {
@@ -653,7 +1232,12 @@ pub(super) fn refresh_menu_ui(
             }
         }
         if let Some(mut disabled) = disabled {
-            let off = *action == MenuAction::Enter && cur.is_none();
+            let off = match *action {
+                MenuAction::Enter => cur.is_none(),
+                MenuAction::Upgrade(kind) => !account.can_purchase_upgrade(kind),
+                MenuAction::RefundUpgrades => account.upgrades == save::AccountUpgrades::default(),
+                _ => false,
+            };
             if disabled.0 != off {
                 disabled.0 = off;
             }
@@ -709,9 +1293,10 @@ pub(super) fn refresh_menu_ui(
     }
 
     let class = selection.class_def();
-    if let Ok((mut t, mut color)) = name.single_mut() {
-        let want = match (class, cur) {
-            (Some(c), Some((r, _))) => format!("{} {}", race_name(r), c.name),
+    let display_race = hovered_race.or(cur.map(|c| c.0));
+    if let Ok((mut t, mut color)) = texts.p0().single_mut() {
+        let want = match (class, display_race) {
+            (Some(c), Some(r)) => format!("{} {}", race_name(r), c.name),
             _ => String::new(),
         };
         if t.0 != want {
@@ -721,6 +1306,99 @@ pub(super) fn refresh_menu_ui(
         let want = class.map_or(GOLD, |c| rgb(c.color));
         if color.0 != want {
             color.0 = want;
+        }
+    }
+
+    let trait_info = match display_race {
+        Some(r) => {
+            let t = traits::race_trait(r);
+            let mut info = format!("[Racial] {}: {} ({})", race_name(r), t.name(), t.description());
+            if let Some(c) = class {
+                if let Some(syn) = traits::synergy_for(r, c.id) {
+                    info = format!("{}  |  ★ SYNERGY: {} ({})", info, syn.name, syn.description);
+                }
+            }
+            (
+                info,
+                if hovered_race.is_some() {
+                    Color::srgb(1.0, 0.92, 0.45)
+                } else {
+                    Color::srgb(0.9, 0.85, 0.6)
+                },
+            )
+        }
+        None => (String::new(), Color::NONE),
+    };
+    if let Ok((mut t, mut color)) = texts.p3().single_mut() {
+        if t.0 != trait_info.0 {
+            t.0 = trait_info.0;
+        }
+        if color.0 != trait_info.1 {
+            color.0 = trait_info.1;
+        }
+    }
+
+    for (mut t, mut color) in &mut texts.p1() {
+        let want = format!("Difficulty: {}", selection.difficulty.name());
+        if t.0 != want {
+            t.0 = want;
+        }
+        let want_color = difficulty_color(selection.difficulty);
+        if color.0 != want_color {
+            color.0 = want_color;
+        }
+    }
+
+    for (mut t, mut color) in &mut texts.p4() {
+        let want = selection.affixes.label();
+        if t.0 != want {
+            t.0 = want;
+        }
+        let want_color = affix_color(&selection.affixes);
+        if color.0 != want_color {
+            color.0 = want_color;
+        }
+    }
+
+    for (mut text, is_tower, is_armory, rank_opt, btn_opt, bonus_opt) in &mut texts.p2() {
+        if is_armory.is_some() {
+            let want = format!(
+                "Gold: {}g  |  Trophies: {}/{}",
+                account.gold,
+                account.achievements.len(),
+                super::achievements::ACHIEVEMENTS.len()
+            );
+            if text.0 != want {
+                text.0 = want;
+            }
+        } else if is_tower.is_some() {
+            let want = format!("Gold: {}g", account.gold);
+            if text.0 != want {
+                text.0 = want;
+            }
+        } else if let Some(tag) = rank_opt {
+            let kind = tag.0;
+            let rank = account.upgrade_rank(kind);
+            let want = format!("{}  [{}/{}]", kind.name(), rank, save::MAX_UPGRADE_RANK);
+            if text.0 != want {
+                text.0 = want;
+            }
+        } else if let Some(tag) = btn_opt {
+            let kind = tag.0;
+            let want = match account.upgrade_cost(kind) {
+                Some(cost) => format!("+ {}g", cost),
+                None => "MAX".to_string(),
+            };
+            if text.0 != want {
+                text.0 = want;
+            }
+        } else if let Some(tag) = bonus_opt {
+            let kind = tag.0;
+            let rank = account.upgrade_rank(kind);
+            let want = current_bonus_str(kind, rank);
+            if text.0 != want {
+                text.0 = want;
+            }
         }
     }
 }

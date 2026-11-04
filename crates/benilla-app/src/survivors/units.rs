@@ -310,6 +310,17 @@ pub(super) struct Fx<'w> {
 const MAX_VISUAL_HITS: usize = 12;
 
 impl Fx<'_> {
+    /// `SMSG_SPELL_START`: the precast kit persists from here on the caster.
+    pub fn start_cast(&mut self, caster: Entity, spell: u32) {
+        let seq = self.seq.next();
+        self.casts.write(CastEvent {
+            entity: caster,
+            spell_id: spell,
+            kind: CastEventKind::Start,
+            seq,
+        });
+    }
+
     /// `SMSG_SPELL_GO`: the cast kit on the caster, and a missile or an impact at each hit.
     pub fn cast(&mut self, caster: Entity, spell: u32, hits: &[Entity], dest: Option<Vec3>) {
         let seq = self.seq.next();
@@ -371,5 +382,6 @@ impl Fx<'_> {
 
 pub(super) const COLOR_SPELL: u32 = 0xFFFF_DE00;
 pub(super) const COLOR_MELEE: u32 = 0xFFFF_FFFF;
+pub(super) const COLOR_PHYS: u32 = 0xFFFF_FFFF;
 pub(super) const COLOR_HURT: u32 = 0xFFFF_3030;
 pub(super) const COLOR_HEAL: u32 = 0xFF30_FF30;

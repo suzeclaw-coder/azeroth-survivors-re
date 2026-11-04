@@ -362,6 +362,9 @@ pub(super) fn compose(
     phase: Res<State<super::Phase>>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<(&Transform, &Enemy)>,
+    chests: Query<(&Transform, &super::chests::Chest)>,
+    caravans: Query<(&Transform, &super::events::Caravan)>,
+    portals: Query<(&Transform, &super::events::NecroticPortal)>,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
     mut next_at: Local<f32>,
@@ -528,6 +531,81 @@ pub(super) fn compose(
                 Some(icons.sample(x, y))
             });
         }
+    }
+
+    // 1. Unopened Treasure Chests (Gold Diamond blip)
+    let chest_size = 11.0 * scale;
+    for (tf, chest) in &chests {
+        if chest.opened {
+            continue;
+        }
+        let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+        let dist = off.length();
+        let clamped = if dist > radius {
+            off = off.normalize() * (radius * 0.92);
+            true
+        } else {
+            false
+        };
+        blit(buf, center + off / yd_per_px, chest_size, |q| {
+            let r = q.x.abs() + q.y.abs();
+            if r <= chest_size * 0.42 {
+                let glow = if clamped { 0.85 } else { 1.0 };
+                Some([1.0 * glow, 0.85 * glow, 0.15 * glow, 1.0])
+            } else if r <= chest_size * 0.52 {
+                Some([0.4, 0.25, 0.05, 0.9])
+            } else {
+                None
+            }
+        });
+    }
+
+    // 2. Goblin Supply Caravans (Cyan glowing square blip)
+    let wagon_size = 12.0 * scale;
+    for (tf, _) in &caravans {
+        let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+        let dist = off.length();
+        let clamped = if dist > radius {
+            off = off.normalize() * (radius * 0.92);
+            true
+        } else {
+            false
+        };
+        blit(buf, center + off / yd_per_px, wagon_size, |q| {
+            let max_d = q.x.abs().max(q.y.abs());
+            if max_d <= wagon_size * 0.38 {
+                let glow = if clamped { 0.8 } else { 1.0 };
+                Some([0.2 * glow, 0.95 * glow, 0.9 * glow, 1.0])
+            } else if max_d <= wagon_size * 0.48 {
+                Some([0.05, 0.25, 0.3, 0.9])
+            } else {
+                None
+            }
+        });
+    }
+
+    // 3. Scourge Necrotic Portals (Purple void rift diamond blip)
+    let portal_size = 13.0 * scale;
+    for (tf, _) in &portals {
+        let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+        let dist = off.length();
+        let clamped = if dist > radius {
+            off = off.normalize() * (radius * 0.92);
+            true
+        } else {
+            false
+        };
+        blit(buf, center + off / yd_per_px, portal_size, |q| {
+            let r = q.x.abs() + q.y.abs();
+            if r <= portal_size * 0.42 {
+                let glow = if clamped { 0.8 } else { 1.0 };
+                Some([0.75 * glow, 0.15 * glow, 0.95 * glow, 1.0])
+            } else if r <= portal_size * 0.52 {
+                Some([0.25, 0.05, 0.35, 0.9])
+            } else {
+                None
+            }
+        });
     }
 
     if let Some(image) = images.get_mut(&map.image) {

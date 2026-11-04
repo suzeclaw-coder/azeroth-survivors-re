@@ -31,9 +31,18 @@ mkdir -p "$DATA_DIR"
 if [ ! -f "$ZIP" ]; then
     echo "downloading the game data (a WoW 1.12.1 client, ~5.5 GB)…"
     echo "  $URL"
-    curl -L -C - -o "$ZIP" "$URL"
+    if command -v aria2c >/dev/null 2>&1; then
+        aria2c -x 16 -s 16 -k 1M -c -d "$DATA_DIR" -o "$(basename "$ZIP")" "$URL"
+    else
+        curl -L -C - -o "$ZIP" "$URL"
+    fi
 else
     echo "resuming/using $ZIP"
+    if command -v aria2c >/dev/null 2>&1 && [ -f "$ZIP.aria2" ]; then
+        aria2c -x 16 -s 16 -k 1M -c -d "$DATA_DIR" -o "$(basename "$ZIP")" "$URL"
+    elif [ ! -f "$DATA/terrain.MPQ" ]; then
+        curl -L -C - -o "$ZIP" "$URL"
+    fi
 fi
 
 echo "extracting MPQs into ${DATA}…"
