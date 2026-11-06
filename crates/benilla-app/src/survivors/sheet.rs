@@ -123,8 +123,9 @@ fn format_stats_short(item: &GearItem) -> String {
 }
 
 /// Spawns the static framework for the Character Sheet modal at app startup.
-pub(super) fn setup_character_sheet(mut commands: Commands, font: Res<HudFont>) {
-    let f = &font.0;
+pub(super) fn setup_character_sheet(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = crate::char_select::wow_font(&asset_server);
+    let f = &font;
 
     commands
         .spawn((
@@ -265,7 +266,7 @@ pub(super) fn refresh_character_sheet(
     account: Option<Res<Account>>,
     _selection: Res<Selection>,
     phase: Res<State<Phase>>,
-    font: Res<HudFont>,
+    font: Option<Res<HudFont>>,
     mut root_query: Query<(&mut Visibility, &mut Node), With<SheetRoot>>,
     equipped_query: Query<Entity, With<SheetEquippedContainer>>,
     stats_query: Query<Entity, With<SheetStatsContainer>>,
@@ -273,6 +274,9 @@ pub(super) fn refresh_character_sheet(
     mut last_version: Local<u32>,
     mut last_open: Local<bool>,
 ) {
+    let Some(font) = font else {
+        return;
+    };
     let f = &font.0;
     let is_open = run.vault.is_open;
     let p = *phase.get();

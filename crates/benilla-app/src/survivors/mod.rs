@@ -73,6 +73,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<Selection>()
             .init_resource::<Run>()
             .init_resource::<save::Account>()
+            .init_resource::<hud::HudFont>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()

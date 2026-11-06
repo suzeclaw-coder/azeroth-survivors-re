@@ -307,8 +307,16 @@ impl Offer {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(super) struct HudFont(pub(super) Handle<Font>);
+
+impl FromWorld for HudFont {
+    fn from_world(world: &mut World) -> Self {
+        let asset_server = world.resource::<AssetServer>();
+        let font = crate::char_select::wow_font(asset_server);
+        Self(font)
+    }
+}
 
 pub(super) fn rgb(hex: u32) -> Color {
     Color::srgb_u8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
