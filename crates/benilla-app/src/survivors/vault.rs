@@ -75,6 +75,62 @@ impl ExtractionVault {
     pub fn extract_to_account(&mut self, account: &mut AccountSave) {
         account.armory.extend(self.vaulted.drain(..));
     }
+
+    /// Equips an item into the equipped list from either the vault (from_vault = true) or backpack (from_vault = false).
+    /// If an item was already equipped in that slot, it is returned to the backpack.
+    pub fn equip_item(
+        &mut self,
+        equipped: &mut Vec<GearItem>,
+        item_idx: usize,
+        from_vault: bool,
+    ) -> bool {
+        let item = if from_vault {
+            if item_idx < self.vaulted.len() {
+                self.vaulted.remove(item_idx)
+            } else {
+                return false;
+            }
+        } else {
+            if item_idx < self.backpack.len() {
+                self.backpack.remove(item_idx)
+            } else {
+                return false;
+            }
+        };
+
+        let slot = item.slot;
+        if let Some(pos) = equipped.iter().position(|e| e.slot == slot) {
+            let old = equipped.remove(pos);
+            self.backpack.push(old);
+        }
+        equipped.push(item);
+        true
+    }
+
+    /// Unequips an item from the equipped list and places it in the backpack.
+    pub fn unequip_item(
+        &mut self,
+        equipped: &mut Vec<GearItem>,
+        slot: super::gear::EquipSlot,
+    ) -> bool {
+        if let Some(pos) = equipped.iter().position(|e| e.slot == slot) {
+            let item = equipped.remove(pos);
+            self.backpack.push(item);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Salvages an item from the backpack, returning its gold value.
+    pub fn salvage_backpack_item(&mut self, backpack_idx: usize) -> Option<u64> {
+        if backpack_idx < self.backpack.len() {
+            let item = self.backpack.remove(backpack_idx);
+            Some(item.salvage_value())
+        } else {
+            None
+        }
+    }
 }
 
 /// Rolls gear drops on boss kills or high-tier chest openings.
@@ -161,6 +217,41 @@ mod tests {
         assert_eq!(account.armory[0].name, "Legendary Sword");
         assert_eq!(vault.vaulted.len(), 0);
         // Backpack item was NOT extracted!
+        assert_eq!(vault.backpack.len(), 1);
+    }
+
+    #[test]
+    fn test_in_run_equip_unequip_salvage() {
+        let mut vault = ExtractionVault::new(2);
+        let mut equipped = Vec::new();
+
+        let item1 = make_test_item(1, "Breastplate 1");
+        let item2 = make_test_item(2, "Breastplate 2");
+
+        vault.backpack.push(item1);
+        vault.backpack.push(item2);
+
+        // Equip item1 from backpack
+        assert!(vault.equip_item(&mut equipped, 0, false));
+        assert_eq!(equipped.len(), 1);
+        assert_eq!(equipped[0].name, "Breastplate 1");
+        assert_eq!(vault.backpack.len(), 1);
+
+        // Equip item2 from backpack: should displace Breastplate 1 into backpack
+        assert!(vault.equip_item(&mut equipped, 0, false));
+        assert_eq!(equipped.len(), 1);
+        assert_eq!(equipped[0].name, "Breastplate 2");
+        assert_eq!(vault.backpack.len(), 1);
+        assert_eq!(vault.backpack[0].name, "Breastplate 1");
+
+        // Unequip item2
+        assert!(vault.unequip_item(&mut equipped, EquipSlot::Chest));
+        assert_eq!(equipped.len(), 0);
+        assert_eq!(vault.backpack.len(), 2);
+
+        // Salvage backpack item
+        let gold = vault.salvage_backpack_item(0);
+        assert!(gold.is_some());
         assert_eq!(vault.backpack.len(), 1);
     }
 }

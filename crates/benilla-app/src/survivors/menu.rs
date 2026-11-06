@@ -52,6 +52,7 @@ pub(super) enum MenuAction {
     ToggleHardcore,
     Upgrade(UpgradeKind),
     RefundUpgrades,
+    OpenArmoryModal,
 }
 
 /// On [`MenuRoot`] once the glue art is in and the screen is built.
@@ -1198,16 +1199,17 @@ fn armory_frame(
                 }
             });
 
-        let refund_btn_w = 210.0;
-        let refund_btn_h = 32.0;
-        let refund_btn_left = (260.0 - refund_btn_w) / 2.0;
-        let refund_btn_top = TOWER_H - 46.0;
+        let btn_h = 28.0;
+        let btn_top = TOWER_H - 46.0;
 
         frame
             .spawn(Node {
                 position_type: PositionType::Absolute,
-                left: px(refund_btn_left),
-                top: px(refund_btn_top),
+                left: px(12.0),
+                top: px(btn_top),
+                width: px(236.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
                 ..default()
             })
             .with_children(|r| {
@@ -1215,10 +1217,21 @@ fn armory_frame(
                     r,
                     art,
                     f,
+                    MenuAction::OpenArmoryModal,
+                    "Armory [C]",
+                    114.0,
+                    btn_h,
+                    GlueBtnKind::Small,
+                    1.0,
+                );
+                glue_button(
+                    r,
+                    art,
+                    f,
                     MenuAction::RefundUpgrades,
                     "Refund All",
-                    refund_btn_w,
-                    refund_btn_h,
+                    114.0,
+                    btn_h,
                     GlueBtnKind::Small,
                     1.0,
                 );
@@ -1274,6 +1287,10 @@ pub(super) fn menu_clicks(
         }
         MenuAction::RefundUpgrades => {
             account.refund_upgrades();
+        }
+        MenuAction::OpenArmoryModal => {
+            run.vault.is_open = true;
+            run.version += 1;
         }
         MenuAction::Randomize => {
             let picks: Vec<(usize, usize)> = all
@@ -1397,7 +1414,8 @@ pub(super) fn refresh_menu_ui(
             | MenuAction::Enter
             | MenuAction::CycleDifficulty
             | MenuAction::CycleAffixes
-            | MenuAction::ToggleHardcore => false,
+            | MenuAction::ToggleHardcore
+            | MenuAction::OpenArmoryModal => false,
             MenuAction::Upgrade(_) | MenuAction::RefundUpgrades => false,
         };
         if let Some(mut lock) = lock {

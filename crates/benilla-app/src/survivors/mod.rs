@@ -31,6 +31,7 @@ mod minimap;
 pub mod minions;
 mod mobility;
 pub(crate) mod save;
+pub mod sheet;
 mod shrines;
 pub mod skillshot;
 pub mod specs;
@@ -89,7 +90,14 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(fct::FctPlugin)
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<fill::FillMaterial>::default())
-            .add_systems(Startup, (hud::setup_hud, save::load_account))
+            .add_systems(
+                Startup,
+                (
+                    hud::setup_hud,
+                    sheet::setup_character_sheet,
+                    save::load_account,
+                ),
+            )
             .add_systems(Update, hero::daylight)
             .add_systems(
                 Update,
@@ -161,6 +169,8 @@ impl Plugin for SurvivorsPlugin {
                         hud::menu_preview,
                         hud::buttons,
                         hud::keys,
+                        sheet::sheet_keys,
+                        sheet::sheet_buttons,
                         hud::refresh_menu,
                         menu::restore_pick,
                         menu::build_menu,
@@ -184,6 +194,7 @@ impl Plugin for SurvivorsPlugin {
                             hud::refresh_dash,
                             hud::refresh_skillshot,
                             hud::refresh_ultimate,
+                            sheet::refresh_character_sheet,
                             hud::refresh_blood_moon,
                             hud::refresh_critical_vignette,
                             hud::refresh_achievement_toast,
@@ -583,6 +594,16 @@ impl Default for Run {
 }
 
 impl Run {
+    /// Equips an item into the equipped list from either the vault (from_vault = true) or backpack (from_vault = false).
+    pub fn equip_item(&mut self, item_idx: usize, from_vault: bool) -> bool {
+        self.vault.equip_item(&mut self.equipped, item_idx, from_vault)
+    }
+
+    /// Unequips an item from the equipped list and returns it to the backpack.
+    pub fn unequip_item(&mut self, slot: gear::EquipSlot) -> bool {
+        self.vault.unequip_item(&mut self.equipped, slot)
+    }
+
     pub fn stats(&self) -> Stats {
         self.stats_with_account(None)
     }
@@ -691,10 +712,12 @@ impl Run {
         }
 
         if let Some(acc) = account {
-            for item in acc.equipped.values() {
-                item.apply_to_stats(&mut s, self.class.id);
+            if self.equipped.is_empty() {
+                for item in acc.equipped.values() {
+                    item.apply_to_stats(&mut s, self.class.id);
+                }
+                gear::apply_set_bonuses(acc.equipped.values(), &mut s);
             }
-            gear::apply_set_bonuses(acc.equipped.values(), &mut s);
             if let Some(title) = acc.active_title_def() {
                 match title.stat {
                     gear::StatType::Stamina => s.max_hp *= 1.0 + (title.bonus_value / 100.0),
@@ -808,6 +831,11 @@ fn record_game_over(
         titles::check_title_unlocks(&mut account, false, run.is_hardcore, run.combo.max_combo, run.elapsed);
     }
     run.vault.extract_to_account(&mut account);
+
+    // Synchronize equipped gear changes back to account armory
+    for item in run.equipped.drain(..) {
+        account.equipped.insert(item.slot, item);
+    }
 
     // Hardcore death handling: record fallen hero in graveyard
     if run.is_hardcore && run.hp <= 0.0 {

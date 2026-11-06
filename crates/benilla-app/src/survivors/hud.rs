@@ -250,11 +250,12 @@ pub(super) enum UiAction {
     BanishOffer,
     PortalFinishRun,
     PortalEndlessMode,
+    ToggleCharacterSheet,
 }
 
 /// The colour a button returns to when not hovered.
 #[derive(Component)]
-pub(super) struct BaseColor(Color);
+pub(super) struct BaseColor(pub Color);
 
 #[derive(Clone, Copy)]
 pub(super) enum Choice {
@@ -1120,7 +1121,19 @@ pub(super) fn setup_hud(
                         line.spawn((LevelText, text(f, "Level 1", 14.0, GOLD)));
                         line.spawn((KillText, text(f, "Kills 0", 14.0, Color::WHITE)));
                         line.spawn((GoldText, text(f, "Gold: 0", 14.0, GOLD)));
-                        line.spawn((VaultText, text(f, "Vault: 0/2", 14.0, Color::srgb(0.4, 0.8, 1.0))));
+                        line.spawn((
+                            button(UiAction::ToggleCharacterSheet, BUTTON),
+                            Node {
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(4.0)),
+                                margin: UiRect::left(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|b| {
+                            b.spawn((VaultText, text(f, "Vault: 0/2 [C]", 13.0, Color::srgb(0.4, 0.8, 1.0))));
+                        });
                     });
                 });
                 // The minimap cluster's column.
@@ -2169,6 +2182,10 @@ pub(super) fn buttons(
                         run.overtime = true;
                         next.set(Phase::Playing);
                     }
+                    (UiAction::ToggleCharacterSheet, _) => {
+                        run.vault.is_open = !run.vault.is_open;
+                        run.version += 1;
+                    }
                     _ => {}
                 }
             }
@@ -2195,18 +2212,42 @@ pub(super) fn keys(
             {
                 next.set(Phase::Playing);
             }
+            if keys.just_pressed(KeyCode::KeyC) || keys.just_pressed(KeyCode::KeyB) {
+                run.vault.is_open = !run.vault.is_open;
+                run.version += 1;
+            }
+            if keys.just_pressed(KeyCode::Escape) && run.vault.is_open {
+                run.vault.is_open = false;
+                run.version += 1;
+            }
         }
         Phase::Playing => {
-            if keys.just_pressed(KeyCode::Escape) || gp_start {
-                next.set(Phase::Paused);
+            if keys.just_pressed(KeyCode::KeyC) || keys.just_pressed(KeyCode::KeyB) {
+                run.vault.is_open = !run.vault.is_open;
+                run.version += 1;
+            } else if keys.just_pressed(KeyCode::Escape) || gp_start {
+                if run.vault.is_open {
+                    run.vault.is_open = false;
+                    run.version += 1;
+                } else {
+                    next.set(Phase::Paused);
+                }
             }
             if keys.just_pressed(KeyCode::KeyM) || gp_select {
                 run.meter.toggle();
             }
         }
         Phase::Paused => {
-            if keys.just_pressed(KeyCode::Escape) || gp_start || gp_south {
-                next.set(Phase::Playing);
+            if keys.just_pressed(KeyCode::KeyC) || keys.just_pressed(KeyCode::KeyB) {
+                run.vault.is_open = !run.vault.is_open;
+                run.version += 1;
+            } else if keys.just_pressed(KeyCode::Escape) || gp_start || gp_south {
+                if run.vault.is_open {
+                    run.vault.is_open = false;
+                    run.version += 1;
+                } else {
+                    next.set(Phase::Playing);
+                }
             }
         }
         Phase::LevelUp => {}
