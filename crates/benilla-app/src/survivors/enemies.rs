@@ -27,6 +27,25 @@ pub enum ChampionModifier {
     Shielded,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AilmentKind {
+    Bleed,
+    Burn,
+    Poison,
+    Generic,
+}
+
+impl AilmentKind {
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "rupture" | "deep_wounds" | "garrote" | "rend" => Self::Bleed,
+            "immolate" | "corruption" | "pyroblast" | "fireball" => Self::Burn,
+            "serpent_sting" => Self::Poison,
+            _ => Self::Generic,
+        }
+    }
+}
+
 impl ChampionModifier {
     pub const ALL: [ChampionModifier; 5] = [
         ChampionModifier::Molten,
@@ -99,6 +118,7 @@ pub(super) struct Dot {
     pub dps: f32,
     pub left: f32,
     pub tick: f32,
+    pub ailment: AilmentKind,
 }
 
 /// A corpse playing its death before it fades.
@@ -608,6 +628,9 @@ pub(super) fn move_enemies(
             fx.swing(ent, hero_e, taken);
             if taken > 0.0 {
                 fx.number(hero_e, taken, false, COLOR_HURT);
+                if run.hp <= 0.0 && run.killer_name.is_none() {
+                    run.killer_name = Some(e.def.name.to_string());
+                }
                 if e.champion == Some(ChampionModifier::Vampiric) {
                     let leech = taken * 0.25;
                     e.hp = (e.hp + leech).min(e.max_hp);
@@ -842,6 +865,9 @@ pub(super) fn tick_molten_fire(
             let taken = hero::hurt_hero(&mut run, 14.0 * dt);
             if taken > 0.0 {
                 fx.number(hero_e, taken, false, 0xFFFF_4500);
+                if run.hp <= 0.0 && run.killer_name.is_none() {
+                    run.killer_name = Some("Molten Lava Patch".to_string());
+                }
             }
         }
     }

@@ -267,6 +267,9 @@ pub(super) fn update_telegraphs(
                     fx.impact(hero_e, tele.spell_id);
                     if taken > 0.0 {
                         fx.number(hero_e, taken, false, COLOR_HURT);
+                        if run.hp <= 0.0 && run.killer_name.is_none() {
+                            run.killer_name = Some(format!("Boss Ability (Spell {})", tele.spell_id));
+                        }
                     }
                 } else {
                     fx.impact(tele.source, tele.spell_id);

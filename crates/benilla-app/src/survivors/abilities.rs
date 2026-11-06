@@ -892,6 +892,7 @@ pub(super) fn apply_hits(
     mut rng: ResMut<Rng>,
 ) {
     let dt = time.delta_secs();
+    run.enchanter.crusader_timer = (run.enchanter.crusader_timer - dt).max(0.0);
     let now = run.elapsed;
     let mut due: Vec<Hit> = incoming.read().cloned().collect();
     pending.0.retain(|(t, h)| {
@@ -925,16 +926,47 @@ pub(super) fn apply_hits(
         all.push(Hit { splash: 0.0, ..h });
     }
 
+    let mut bursts: Vec<(Entity, Vec3, u32, f32)> = Vec::new();
+
     let mut kill =
         |commands: &mut Commands,
          run: &mut Run,
          sounds: &mut MessageWriter<crate::sound::GlueSound>,
          rng: &mut ResMut<Rng>,
+         bursts: &mut Vec<(Entity, Vec3, u32, f32)>,
          e: Entity,
          pos: Vec3,
          en: &mut Enemy,
          spell: u32,
          key: &'static str| {
+            // Ailment death burst: compute unspent DoT damage before clearing
+            let mut bleed_dmg = 0.0;
+            let mut burn_dmg = 0.0;
+            let mut poison_dmg = 0.0;
+            for d in &en.dots {
+                let mut rem = d.dps * d.left;
+                if d.key == "rupture" && run.has_glyph(super::glyphs::GlyphKind::RuptureBurst) {
+                    rem *= 1.5;
+                }
+                match d.ailment {
+                    enemies::AilmentKind::Bleed => bleed_dmg += rem,
+                    enemies::AilmentKind::Burn => burn_dmg += rem,
+                    enemies::AilmentKind::Poison => poison_dmg += rem,
+                    enemies::AilmentKind::Generic => {}
+                }
+            }
+            let burst_dmg = bleed_dmg + burn_dmg + poison_dmg;
+            if burst_dmg > 0.0 {
+                let dominant_spell = if burn_dmg >= bleed_dmg && burn_dmg >= poison_dmg && burn_dmg > 0.0 {
+                    20481 // Fire impact
+                } else if bleed_dmg >= poison_dmg && bleed_dmg > 0.0 {
+                    11579 // Blood splatter
+                } else {
+                    8092 // Nature burst
+                };
+                bursts.push((e, pos, dominant_spell, burst_dmg));
+            }
+
             en.dead = true;
             en.hp = 0.0;
             en.dots.clear();
@@ -961,6 +993,13 @@ pub(super) fn apply_hits(
                         super::trinkets::award_trinket(run, trinket, sounds);
                     }
                 }
+                super::vault::roll_boss_gear_drop(
+                    &mut run.vault,
+                    run.level,
+                    &mut run.banner,
+                    rng,
+                    true,
+                );
             }
         };
 
@@ -972,6 +1011,25 @@ pub(super) fn apply_hits(
             continue;
         }
         let mut dmg = h.damage;
+        if h.key == "eviscerate" {
+            let bleed_ticks: f32 = en.dots.iter()
+                .filter(|d| matches!(d.ailment, enemies::AilmentKind::Bleed))
+                .map(|d| d.left)
+                .sum();
+            dmg *= 1.0 + (0.05 * bleed_ticks).min(1.0);
+        } else if h.key == "hurricane" {
+            if en.dots.iter().any(|d| d.key == "moonfire" || d.key == "insect_swarm") {
+                dmg *= 1.08;
+            }
+        } else if h.key == "shadow_bolt" {
+            let dot_rem: f32 = en.dots.iter()
+                .filter(|d| d.key == "corruption" || d.key == "curse_of_agony")
+                .map(|d| d.dps * d.left)
+                .fold(0.0, f32::max);
+            if dot_rem > 0.0 {
+                dmg *= 1.0 + (dot_rem * 0.01).min(0.5);
+            }
+        }
         if let Effect::Execute(threshold) = h.effect {
             if !en.boss && en.hp / en.max_hp <= threshold {
                 dmg = dmg.max(en.hp);
@@ -1012,11 +1070,32 @@ pub(super) fn apply_hits(
                     impact: 11366,
                 });
             }
+            let (proc_fire, crusader_proc, leech_frac) = run.enchanter.roll_on_hit_procs(&mut rng);
+            if proc_fire > 0.0 {
+                en.hp -= proc_fire;
+                run.damage_done += f64::from(proc_fire);
+                fx.number(e, proc_fire, false, 0xFFFF_4500);
+                fx.impact(e, 20481);
+            }
+            if crusader_proc {
+                let max = run.stats().max_hp;
+                let crusader_heal = max * 0.12;
+                run.hp = (run.hp + crusader_heal).min(max);
+                if let Ok(htf) = hero.single() {
+                    combat_text.write(CombatTextMsg {
+                        pos: htf.translation,
+                        amount: crusader_heal,
+                        is_crit: true,
+                        kind: CombatTextKind::Heal,
+                    });
+                }
+            }
             let mut drain_frac = match h.effect {
                 Effect::Drain(frac) => frac,
                 _ if run.race == 5 && traits::is_bleeding_or_burning(&en) => 0.10,
                 _ => 0.0,
             };
+            drain_frac += leech_frac;
             if run.trinkets.iter().any(|t| t.kind == super::trinkets::TrinketKind::ShardOfTheScale) {
                 drain_frac += 0.10;
             }
@@ -1040,12 +1119,14 @@ pub(super) fn apply_hits(
             if en.dots.len() >= 6 {
                 en.dots.remove(0);
             }
+            let ailment = enemies::AilmentKind::from_key(h.key);
             en.dots.push(enemies::Dot {
                 spell: h.spell,
                 key: h.key,
                 dps: h.dot,
                 left: h.dot_dur,
                 tick: 1.0,
+                ailment,
             });
         }
         let boss = en.boss;
@@ -1068,7 +1149,7 @@ pub(super) fn apply_hits(
             marks.add(h.mark, h.mark_dur);
         }
         if en.hp <= 0.0 {
-            kill(&mut commands, &mut run, &mut sounds, &mut rng, e, tf.translation, &mut en, h.spell, h.key);
+            kill(&mut commands, &mut run, &mut sounds, &mut rng, &mut bursts, e, tf.translation, &mut en, h.spell, h.key);
             units::kill_unit(&mut store);
             marks.clear();
         }
@@ -1104,10 +1185,46 @@ pub(super) fn apply_hits(
                 kind: CombatTextKind::from_key(last_dot.1),
             });
             if en.hp <= 0.0 {
-                kill(&mut commands, &mut run, &mut sounds, &mut rng, e, tf.translation, &mut en, last_dot.0, last_dot.1);
+                kill(&mut commands, &mut run, &mut sounds, &mut rng, &mut bursts, e, tf.translation, &mut en, last_dot.0, last_dot.1);
                 units::kill_unit(&mut store);
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);
+            }
+        }
+    }
+
+    // Dispatch ailment death bursts to nearby enemies within 8.0 yards (up to 4 targets)
+    for (dead_e, burst_pos, burst_spell, total_burst_dmg) in bursts {
+        let mut candidates: Vec<(Entity, f32)> = Vec::new();
+        for (cand_e, _, cand_tf, cand_en, ..) in enemies.iter() {
+            if cand_e != dead_e && !cand_en.dead {
+                let dist = flat(cand_tf.translation - burst_pos).length();
+                if dist <= 8.0 {
+                    candidates.push((cand_e, dist));
+                }
+            }
+        }
+        if !candidates.is_empty() {
+            candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+            let targets: Vec<Entity> = candidates.into_iter().take(4).map(|c| c.0).collect();
+            let per_target_dmg = total_burst_dmg / (targets.len() as f32);
+            for target_e in targets {
+                fx.impact(target_e, burst_spell);
+                pending.0.push((
+                    now,
+                    Hit {
+                        target: target_e,
+                        damage: per_target_dmg,
+                        spell: burst_spell,
+                        key: "ailment_burst",
+                        color: match burst_spell {
+                            20481 => 0xFFFF_661A, // Fire
+                            11579 => 0xFFE6_1A1A, // Blood
+                            _ => 0xFF33_E64D,     // Nature
+                        },
+                        ..Hit::direct(target_e, per_target_dmg, false)
+                    },
+                ));
             }
         }
     }

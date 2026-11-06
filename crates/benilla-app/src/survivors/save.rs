@@ -26,6 +26,29 @@ pub const GREED_BONUS_PER_RANK: f32 = 0.10;
 pub const CHANNELER_BONUS_PER_RANK: f32 = 0.10;
 pub const FORTUNE_BONUS_PER_RANK: f32 = 0.05;
 
+/// A fallen hardcore legend recorded in the Graveyard.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub(crate) struct FallenHero {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub race: u8,
+    #[serde(default)]
+    pub class: u8,
+    #[serde(default)]
+    pub level: u32,
+    #[serde(default)]
+    pub zone: String,
+    #[serde(default)]
+    pub survived_secs: f32,
+    #[serde(default)]
+    pub killed_by: String,
+    #[serde(default)]
+    pub date_utc: String,
+    #[serde(default)]
+    pub highest_spree: u32,
+}
+
 /// Root account data persisted across game sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub(crate) struct AccountSave {
@@ -37,6 +60,26 @@ pub(crate) struct AccountSave {
     pub high_scores: HashMap<String, ZoneRecord>,
     #[serde(default)]
     pub achievements: Vec<String>,
+    #[serde(default)]
+    pub graveyard: Vec<FallenHero>,
+    #[serde(default)]
+    pub armory: Vec<super::gear::GearItem>,
+    #[serde(default)]
+    pub equipped: HashMap<super::gear::EquipSlot, super::gear::GearItem>,
+    #[serde(default)]
+    pub transmog_unlocked: Vec<u32>,
+    #[serde(default)]
+    pub hide_helm: bool,
+    #[serde(default)]
+    pub hide_shoulders: bool,
+    #[serde(default)]
+    pub hide_cloak: bool,
+    #[serde(default)]
+    pub determination: HashMap<String, u8>,
+    #[serde(default)]
+    pub unlocked_titles: Vec<super::titles::TitleId>,
+    #[serde(default)]
+    pub active_title: Option<super::titles::TitleId>,
 }
 
 /// Meta-progression upgrades purchased with gold, capped at 5 ranks each.
@@ -423,6 +466,94 @@ impl AccountSave {
         let _ = self.save();
         true
     }
+
+    /// Equips an item from the armory into its designated slot.
+    /// If an item was already equipped in that slot, it is returned to the armory.
+    pub(crate) fn equip_item(&mut self, armory_idx: usize) -> bool {
+        if armory_idx < self.armory.len() {
+            let item = self.armory.remove(armory_idx);
+            let slot = item.slot;
+            if !self.transmog_unlocked.contains(&item.display_id) {
+                self.transmog_unlocked.push(item.display_id);
+            }
+            if let Some(old) = self.equipped.insert(slot, item) {
+                self.armory.push(old);
+            }
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Unequips an item from a slot and returns it to the armory.
+    pub(crate) fn unequip_item(&mut self, slot: super::gear::EquipSlot) -> bool {
+        if let Some(item) = self.equipped.remove(&slot) {
+            self.armory.push(item);
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Salvages an item from the armory for gold, unlocking its transmog appearance.
+    pub(crate) fn salvage_item(&mut self, armory_idx: usize) -> Option<u64> {
+        if armory_idx < self.armory.len() {
+            let item = self.armory.remove(armory_idx);
+            if !self.transmog_unlocked.contains(&item.display_id) {
+                self.transmog_unlocked.push(item.display_id);
+            }
+            let val = item.salvage_value();
+            self.gold = self.gold.saturating_add(val);
+            let _ = self.save();
+            Some(val)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the active title definition, if one is set.
+    pub(crate) fn active_title_def(&self) -> Option<&'static super::titles::TitleDef> {
+        self.active_title.and_then(super::titles::get_title_def)
+    }
+
+    /// Unlocks a title and persists to disk if newly unlocked.
+    pub(crate) fn unlock_title(&mut self, id: super::titles::TitleId) -> bool {
+        if !self.unlocked_titles.contains(&id) {
+            self.unlocked_titles.push(id);
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sets the currently active title (or None to clear) and saves.
+    pub(crate) fn set_active_title(&mut self, id: Option<super::titles::TitleId>) {
+        self.active_title = id;
+        let _ = self.save();
+    }
+
+    /// Gets current determination pity stacks for a difficulty tier (0..=5).
+    pub(crate) fn determination_for(&self, diff: &str) -> u8 {
+        self.determination.get(diff).copied().unwrap_or(0).min(5)
+    }
+
+    /// Adds a determination stack on wipe for this difficulty (capped at 5).
+    pub(crate) fn add_determination(&mut self, diff: &str) {
+        let entry = self.determination.entry(diff.to_string()).or_insert(0);
+        *entry = (*entry + 1).min(5);
+        let _ = self.save();
+    }
+
+    /// Resets determination stacks back to 0 on victory for this difficulty.
+    pub(crate) fn reset_determination(&mut self, diff: &str) {
+        if let Some(entry) = self.determination.get_mut(diff) {
+            *entry = 0;
+            let _ = self.save();
+        }
+    }
 }
 
 /// Numerical rank for difficulty tiers used for comparison in high score records.
@@ -640,5 +771,47 @@ mod tests {
         assert_eq!(rec.best_survival_secs, 350.0);
         assert_eq!(rec.highest_level, 18);
         assert_eq!(rec.highest_difficulty, "Heroic");
+    }
+
+    #[test]
+    fn determination_pity_system_flow() {
+        let mut acc = AccountSave::default();
+        assert_eq!(acc.determination_for("Heroic"), 0);
+
+        // Wipe 1
+        acc.add_determination("Heroic");
+        assert_eq!(acc.determination_for("Heroic"), 1);
+
+        // Wipe up to 6 times (should cap at 5)
+        for _ in 0..5 {
+            acc.add_determination("Heroic");
+        }
+        assert_eq!(acc.determination_for("Heroic"), 5);
+
+        // Different difficulty is unaffected
+        assert_eq!(acc.determination_for("Mythic"), 0);
+
+        // Victory resets to 0
+        acc.reset_determination("Heroic");
+        assert_eq!(acc.determination_for("Heroic"), 0);
+    }
+
+    #[test]
+    fn title_unlock_and_active_perk() {
+        use crate::survivors::titles::TitleId;
+        use crate::survivors::gear::StatType;
+
+        let mut acc = AccountSave::default();
+        assert!(acc.unlocked_titles.is_empty());
+        assert!(acc.active_title.is_none());
+
+        assert!(acc.unlock_title(TitleId::TheImmortal));
+        assert!(!acc.unlock_title(TitleId::TheImmortal)); // idempotent
+        assert_eq!(acc.unlocked_titles.len(), 1);
+
+        acc.set_active_title(Some(TitleId::TheImmortal));
+        let def = acc.active_title_def().expect("should have active title");
+        assert_eq!(def.title, "the Immortal");
+        assert_eq!(def.stat, StatType::Stamina);
     }
 }

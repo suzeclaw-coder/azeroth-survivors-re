@@ -39,6 +39,8 @@ pub(super) struct PauseRoot;
 #[derive(Component)]
 pub(super) struct OverRoot;
 #[derive(Component)]
+pub(super) struct PortalRoot;
+#[derive(Component)]
 pub(super) struct XpBar;
 #[derive(Component)]
 pub(super) struct XpFill;
@@ -52,6 +54,8 @@ pub(super) struct TimerText;
 pub(super) struct KillText;
 #[derive(Component)]
 pub(super) struct GoldText;
+#[derive(Component)]
+pub(super) struct VaultText;
 #[derive(Component)]
 pub(super) struct HpFrame;
 #[derive(Component)]
@@ -240,6 +244,8 @@ pub(super) enum UiAction {
     RerollOffer,
     SkipOffer,
     BanishOffer,
+    PortalFinishRun,
+    PortalEndlessMode,
 }
 
 /// The colour a button returns to when not hovered.
@@ -253,10 +259,32 @@ pub(super) enum Choice {
     NewPassive(&'static PassiveDef),
     UpPassive(usize),
     Heal,
+    Gold(u32),
+    UltimateSurge,
     Evolution(&'static super::evolutions::EvolutionDef),
     Specialization(&'static super::specs::SpecDef),
     Minion(&'static super::minions::MinionDef),
 }
+
+impl PartialEq for Choice {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::NewAbility(a), Self::NewAbility(b)) => std::ptr::eq(*a, *b),
+            (Self::Upgrade(a), Self::Upgrade(b)) => a == b,
+            (Self::NewPassive(a), Self::NewPassive(b)) => std::ptr::eq(*a, *b),
+            (Self::UpPassive(a), Self::UpPassive(b)) => a == b,
+            (Self::Heal, Self::Heal) => true,
+            (Self::Gold(a), Self::Gold(b)) => a == b,
+            (Self::UltimateSurge, Self::UltimateSurge) => true,
+            (Self::Evolution(a), Self::Evolution(b)) => std::ptr::eq(*a, *b),
+            (Self::Specialization(a), Self::Specialization(b)) => std::ptr::eq(*a, *b),
+            (Self::Minion(a), Self::Minion(b)) => std::ptr::eq(*a, *b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Choice {}
 
 /// The level-up cards on offer.
 #[derive(Resource, Default)]
@@ -1065,6 +1093,7 @@ pub(super) fn setup_hud(
                         line.spawn((LevelText, text(f, "Level 1", 14.0, GOLD)));
                         line.spawn((KillText, text(f, "Kills 0", 14.0, Color::WHITE)));
                         line.spawn((GoldText, text(f, "Gold: 0", 14.0, GOLD)));
+                        line.spawn((VaultText, text(f, "Vault: 0/2", 14.0, Color::srgb(0.4, 0.8, 1.0))));
                     });
                 });
                 // The minimap cluster's column.
@@ -1603,6 +1632,89 @@ pub(super) fn setup_hud(
                 b.spawn(text(f, "Quit game", 15.0, DIM));
             });
         });
+
+    // --- Victory Portal Choice Modal ---
+    commands
+        .spawn((
+            PortalRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(16.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
+            GlobalZIndex(435),
+            Visibility::Hidden,
+            bevy::ui::FocusPolicy::Block,
+        ))
+        .with_children(|root| {
+            root.spawn(centered(f, "VICTORY PORTAL", 48.0, GOLD));
+            root.spawn(centered(
+                f,
+                "A mystic portal swirls before you. Will you return triumphant, or push into the endless darkness?",
+                18.0,
+                Color::srgb(0.85, 0.85, 0.9),
+            ));
+            root.spawn(Node {
+                column_gap: Val::Px(24.0),
+                margin: UiRect::top(Val::Px(16.0)),
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    button(UiAction::PortalFinishRun, BUTTON),
+                    Node {
+                        width: Val::Px(260.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(6.0)),
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn(text(f, "FINISH RUN", 22.0, GOLD));
+                    b.spawn(text(
+                        f,
+                        "+200 Bonus Gold & Secure Vault",
+                        14.0,
+                        Color::srgb(0.7, 0.9, 0.7),
+                    ));
+                });
+
+                row.spawn((
+                    button(UiAction::PortalEndlessMode, BUTTON),
+                    Node {
+                        width: Val::Px(260.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(6.0)),
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|b| {
+                    b.spawn(text(f, "CONTINUE ENDLESS", 22.0, Color::srgb(1.0, 0.4, 0.4)));
+                    b.spawn(text(
+                        f,
+                        "Infinite Scaling & High Scores",
+                        14.0,
+                        Color::srgb(0.9, 0.7, 0.7),
+                    ));
+                });
+            });
+        });
 }
 
 /// The menu's hero is the run's hero: respawned whenever the pick changes.
@@ -1666,6 +1778,12 @@ pub(super) fn start_run(
         .map(|a| a.upgrades.clone())
         .unwrap_or_else(|| super::save::AccountSave::load().upgrades);
     let dash_max_cd = (3.0 - 0.3 * upgrades.dash_cd as f32).max(1.0);
+    let equipped = account
+        .map(|a| a.equipped.values().cloned().collect())
+        .unwrap_or_default();
+    let determination_stacks = account
+        .map(|a| a.determination_for(selection.difficulty.name()))
+        .unwrap_or(0);
     *run = Run {
         class,
         race,
@@ -1673,6 +1791,9 @@ pub(super) fn start_run(
         dash_max_cd,
         upgrades,
         affixes: selection.affixes,
+        is_hardcore: selection.is_hardcore,
+        equipped,
+        determination_stacks,
         ..Run::default()
     };
     run.abilities.push(Owned {
@@ -1769,8 +1890,21 @@ pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
         }
         out.push(pool.swap_remove(idx).0);
     }
-    if out.is_empty() {
-        out.push(Choice::Heal);
+    if out.len() < 3 {
+        let gold_amount = (200.0 * run.stats().gold_bonus).round().max(100.0) as u32;
+        let endgame_choices = [
+            Choice::Gold(gold_amount),
+            Choice::UltimateSurge,
+            Choice::Heal,
+        ];
+        for choice in endgame_choices {
+            if out.len() >= 3 {
+                break;
+            }
+            if !out.contains(&choice) {
+                out.push(choice);
+            }
+        }
     }
     out
 }
@@ -1798,7 +1932,18 @@ pub(super) fn pick(
         Choice::Upgrade(k) => run.abilities[k].level += 1,
         Choice::NewPassive(p) => run.passives.push((p, 1)),
         Choice::UpPassive(k) => run.passives[k].1 += 1,
-        Choice::Heal => run.hp = run.stats().max_hp,
+        Choice::Heal => {
+            run.hp = run.stats().max_hp;
+            run.banner = Some(("Health Fully Restored!".into(), 2.0));
+        }
+        Choice::Gold(amount) => {
+            run.gold += amount as u64;
+            run.banner = Some((format!("+{} Gold Acquired!", amount), 2.5));
+        }
+        Choice::UltimateSurge => {
+            run.ultimate_charge = 100.0;
+            run.banner = Some(("Ultimate Fully Charged! Press [SPACE].".into(), 3.0));
+        }
         Choice::Evolution(evo) => {
             run.evolved.push(evo.evolved_name);
             run.banner = Some((format!("Evolution Unlocked: {}!", evo.evolved_name), 3.5));
@@ -1898,7 +2043,7 @@ pub(super) fn banish(
                 String::new()
             }
         }
-        Choice::Heal => String::new(),
+        Choice::Heal | Choice::Gold(_) | Choice::UltimateSurge => String::new(),
         Choice::Evolution(evo) => {
             let n = evo.evolved_name.to_string();
             run.banished.push(n.clone());
@@ -1987,6 +2132,16 @@ pub(super) fn buttons(
                     (UiAction::BanishOffer, Phase::LevelUp) => {
                         // Handled in choose_card with hovered card context.
                     }
+                    (UiAction::PortalFinishRun, Phase::PortalChoice) => {
+                        run.won = true;
+                        run.gold += 200;
+                        next.set(Phase::GameOver);
+                    }
+                    (UiAction::PortalEndlessMode, Phase::PortalChoice) => {
+                        run.won = true;
+                        run.overtime = true;
+                        next.set(Phase::Playing);
+                    }
                     _ => {}
                 }
             }
@@ -2028,6 +2183,7 @@ pub(super) fn keys(
             }
         }
         Phase::LevelUp => {}
+        Phase::PortalChoice | Phase::Hub => {}
         Phase::GameOver => {
             if keys.just_pressed(KeyCode::Enter) || gp_start || gp_south {
                 next.set(Phase::Menu);
@@ -2163,6 +2319,27 @@ pub(super) fn describe_card(
             desc: "Everything is mastered. Restores all health.".into(),
             ranks: None,
         },
+        Choice::Gold(amount) => CardText {
+            spell: 20484,
+            name: "Heavy Coin Satchel".into(),
+            tag: "Fortune".into(),
+            tag_color: GOLD_TONE,
+            desc: format!("Everything is mastered. Awards +{} Gold for the Armory.", amount),
+            ranks: None,
+        },
+        Choice::UltimateSurge => {
+            let ult_spell = super::ultimates::UltimateKind::for_class(run.class.id)
+                .map(|u| u.spell())
+                .unwrap_or(31884);
+            CardText {
+                spell: ult_spell,
+                name: "Potion of Power".into(),
+                tag: "Ultimate Surge".into(),
+                tag_color: Color::srgb(0.3, 0.8, 1.0),
+                desc: "Everything is mastered. Instantly charges your Ultimate to 100% [SPACE].".into(),
+                ranks: None,
+            }
+        }
         Choice::Evolution(evo) => CardText {
             spell: evo.icon_spell,
             name: evo.evolved_name.into(),
@@ -2209,6 +2386,7 @@ pub(super) fn refresh_hud(
         Query<&mut Text, With<GoldText>>,
     )>,
     mut xp_fill: Query<&mut Node, With<XpFill>>,
+    mut vault_text: Query<&mut Text, (With<VaultText>, Without<GoldText>, Without<TimerText>)>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
     mut sweeps: ResMut<Assets<SweepUiMaterial>>,
     mut last_version: Local<Option<u32>>,
@@ -2245,16 +2423,31 @@ pub(super) fn refresh_hud(
             **t = gold_str;
         }
     }
-    let banner = match run.banner.as_mut() {
-        Some((msg, t)) => {
-            *t -= time.delta_secs();
-            if *t > 0.0 {
-                msg.clone()
-            } else {
-                String::new()
-            }
+    if let Ok(mut t) = vault_text.single_mut() {
+        let det_str = if run.determination_stacks > 0 {
+            format!(" | Determination: +{}%", run.determination_stacks * 5)
+        } else {
+            String::new()
+        };
+        let vault_str = format!("Vault: {}/{}{}", run.vault.vaulted.len(), run.vault.capacity, det_str);
+        if **t != vault_str {
+            **t = vault_str;
         }
-        None => String::new(),
+    }
+    let banner = if let Some(rem) = run.hearth_channel {
+        format!("Extracting via Hearthstone... {:.1}s", rem.max(0.0))
+    } else {
+        match run.banner.as_mut() {
+            Some((msg, t)) => {
+                *t -= time.delta_secs();
+                if *t > 0.0 {
+                    msg.clone()
+                } else {
+                    String::new()
+                }
+            }
+            None => String::new(),
+        }
     };
     if banner.is_empty() {
         run.banner = None;
@@ -2271,11 +2464,12 @@ pub(super) fn refresh_hud(
         }
     }
     let title = if run.won {
-        "Victory!"
+        "Victory!".to_string()
+    } else if run.is_hardcore {
+        "YOU HAVE FALLEN (HARDCORE)".to_string()
     } else {
-        "You have fallen"
-    }
-    .to_string();
+        "You have fallen".to_string()
+    };
     if let Ok(mut t) = texts.p4().single_mut() {
         **t = title;
     }
@@ -2284,24 +2478,42 @@ pub(super) fn refresh_hud(
     } else {
         String::new()
     };
+    let killer_str = if !run.won {
+        if let Some(ref k) = run.killer_name {
+            format!("   —   Slain by: {}", k)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let vault_info = if !run.vault.vaulted.is_empty() {
+        format!("   —   Extracted Gear: {} items", run.vault.vaulted.len())
+    } else {
+        String::new()
+    };
     let stats = if run.overtime {
         let ot_secs = (run.elapsed - data::VICTORY_SECS).max(0.0) as u32;
         format!(
-            "{} {} in {} (Overtime +{:02}:{:02})   —   Gold Gained: +{}g{}   —   press Enter to play again",
+            "{} {} in {} (Overtime +{:02}:{:02})   —   Gold Gained: +{}g{}{}{}   —   press Enter to play again",
             crate::char_select::race_name(run.race),
             run.class.name,
             selection.map_def().name,
             ot_secs / 60,
             ot_secs % 60,
             run.gold,
+            killer_str,
+            vault_info,
             affixes_str,
         )
     } else {
         format!(
-            "{} {} in {}{}   —   Gold Gained: +{}g   —   press Enter to play again",
+            "{} {} in {}{}{}{}   —   Gold Gained: +{}g   —   press Enter to play again",
             crate::char_select::race_name(run.race),
             run.class.name,
             selection.map_def().name,
+            killer_str,
+            vault_info,
             affixes_str,
             run.gold,
         )
@@ -4190,6 +4402,7 @@ pub(super) fn show_panels(
         Query<(&mut Visibility, &mut Node), With<LevelUpRoot>>,
         Query<(&mut Visibility, &mut Node), With<PauseRoot>>,
         Query<(&mut Visibility, &mut Node), With<OverRoot>>,
+        Query<(&mut Visibility, &mut Node), With<PortalRoot>>,
     )>,
 ) {
     let p = *phase.get();
@@ -4212,7 +4425,7 @@ pub(super) fn show_panels(
         set(root, p == Phase::Menu);
     }
     for root in &mut roots.p1() {
-        set(root, p != Phase::Menu && p != Phase::GameOver);
+        set(root, p != Phase::Menu && p != Phase::GameOver && p != Phase::Hub);
     }
     for root in &mut roots.p2() {
         set(root, p == Phase::LevelUp);
@@ -4222,6 +4435,9 @@ pub(super) fn show_panels(
     }
     for root in &mut roots.p4() {
         set(root, p == Phase::GameOver);
+    }
+    for root in &mut roots.p5() {
+        set(root, p == Phase::PortalChoice);
     }
 }
 
@@ -4269,7 +4485,7 @@ mod tests {
                         assert_ne!(p.name, banished_name);
                         assert_ne!(p.key, banished_name);
                     }
-                    Choice::Heal => {}
+                    Choice::Heal | Choice::Gold(_) | Choice::UltimateSurge => {}
                     Choice::Evolution(evo) => {
                         assert_ne!(evo.evolved_name, banished_name);
                         assert_ne!(evo.base_ability, banished_name);
@@ -4291,5 +4507,62 @@ mod tests {
         let third = banish(&mut run, &mut offer, &mut rng, 0);
         assert!(third.is_none());
         assert_eq!(run.banishes, 0);
+    }
+
+    #[test]
+    fn test_late_game_reward_trio() {
+        let mut run = Run::default();
+        let mut rng = Rng::default();
+
+        // Fill all ability slots to MAX_ABILITY_LEVEL
+        for key in &run.class.pool[0..data::MAX_ABILITIES.min(run.class.pool.len())] {
+            let def = data::ability(key);
+            run.abilities.push(Owned {
+                def,
+                level: data::MAX_ABILITY_LEVEL,
+                cd: 0.1,
+            });
+        }
+        // Fill all passive slots to MAX_PASSIVE_LEVEL
+        for p in &data::PASSIVES[0..data::MAX_PASSIVES] {
+            run.passives.push((p, data::MAX_PASSIVE_LEVEL));
+        }
+        // Take all minions
+        for m in crate::survivors::minions::MINIONS {
+            run.minions.push(m.kind);
+        }
+        // Take all evolutions
+        for e in crate::survivors::evolutions::EVOLUTIONS {
+            run.evolved.push(e.evolved_name);
+        }
+        run.spec = Some(crate::survivors::specs::SpecKind::WarriorArms);
+
+        let choices = choices_for(&run, &mut rng);
+        assert_eq!(choices.len(), 3);
+        assert!(matches!(choices[0], Choice::Gold(_)));
+        assert!(matches!(choices[1], Choice::UltimateSurge));
+        assert!(matches!(choices[2], Choice::Heal));
+
+        let mut offer = Offer { choices };
+        let mut next = NextState::default();
+
+        // Test picking Gold
+        let initial_gold = run.gold;
+        if let Choice::Gold(amt) = offer.choices[0] {
+            pick(0, &mut run, &mut offer, &mut rng, &mut next);
+            assert_eq!(run.gold, initial_gold + amt as u64);
+        }
+
+        // Test picking UltimateSurge
+        run.ultimate_charge = 15.0;
+        offer.choices = choices_for(&run, &mut rng);
+        pick(1, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.ultimate_charge, 100.0);
+
+        // Test picking Heal
+        run.hp = 10.0;
+        offer.choices = choices_for(&run, &mut rng);
+        pick(2, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.hp, run.stats().max_hp);
     }
 }

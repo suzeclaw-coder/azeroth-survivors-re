@@ -10,16 +10,21 @@ mod auto;
 pub mod breakables;
 mod cards;
 pub(crate) mod chests;
+pub mod codex;
 pub mod combo;
 mod data;
 mod enemies;
+pub mod enchanter;
 pub mod events;
 pub mod evolutions;
 pub mod fct;
 mod fill;
+pub mod gear;
+pub mod glyphs;
 mod grade;
 pub mod hazards;
-mod hero;
+pub mod hero;
+pub mod hub;
 mod hud;
 mod menu;
 mod minimap;
@@ -29,10 +34,13 @@ pub(crate) mod save;
 mod shrines;
 pub mod specs;
 mod telegraphs;
+pub mod titles;
 pub(super) mod traits;
 pub mod trinkets;
+pub mod transmog;
 pub(crate) mod ultimates;
 mod units;
+pub mod vault;
 
 use std::collections::HashMap;
 
@@ -74,6 +82,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<events::WorldEventState>()
             .init_resource::<achievements::AchievementState>()
             .init_resource::<hazards::HazardState>()
+            .init_resource::<hero::RangeRingSettings>()
             .add_message::<abilities::Hit>()
             .add_message::<enemies::Loot>()
             .add_plugins(fct::FctPlugin)
@@ -90,6 +99,7 @@ impl Plugin for SurvivorsPlugin {
                     ultimates::cast_ultimate,
                     hero::drive_hero,
                     hero::place_camera,
+                    hero::update_range_rings,
                 )
                     .chain()
                     .in_set(WorldStage::Input),
@@ -211,6 +221,8 @@ impl Plugin for SurvivorsPlugin {
             )
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
+            .add_systems(OnEnter(Phase::PortalChoice), pause)
+            .add_systems(OnEnter(Phase::Hub), (unpause, hub::spawn_hub_npcs))
             .add_systems(OnEnter(Phase::GameOver), (unpause, record_game_over))
             .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
         if let Some(auto) = auto::from_env() {
@@ -232,7 +244,9 @@ pub(super) enum Phase {
     Playing,
     LevelUp,
     Paused,
+    PortalChoice,
     GameOver,
+    Hub,
 }
 
 /// Everything spawned for a run, despawned when the next begins.
@@ -254,6 +268,7 @@ pub(super) struct Selection {
     pub stage: usize,
     pub difficulty: data::Difficulty,
     pub affixes: data::ChallengeAffixes,
+    pub is_hardcore: bool,
     /// Bumped on every change, so the menu rebuilds once.
     pub version: u32,
 }
@@ -300,7 +315,7 @@ impl Owned {
 }
 
 /// The hero's derived numbers, from the base and the passives.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct Stats {
     pub might: f32,
     pub max_hp: f32,
@@ -483,6 +498,14 @@ pub(super) struct Run {
     pub spec: Option<specs::SpecKind>,
     pub minions: Vec<minions::MinionKind>,
     pub pending_minions: Vec<minions::MinionKind>,
+    pub is_hardcore: bool,
+    pub killer_name: Option<String>,
+    pub vault: vault::ExtractionVault,
+    pub glyphs: Vec<glyphs::GlyphKind>,
+    pub equipped: Vec<gear::GearItem>,
+    pub enchanter: enchanter::RunEnchanter,
+    pub hearth_channel: Option<f32>,
+    pub determination_stacks: u8,
 }
 
 impl Default for Run {
@@ -538,6 +561,14 @@ impl Default for Run {
             spec: None,
             minions: Vec::new(),
             pending_minions: Vec::new(),
+            is_hardcore: false,
+            killer_name: None,
+            vault: vault::ExtractionVault::default(),
+            glyphs: Vec::new(),
+            equipped: Vec::new(),
+            enchanter: enchanter::RunEnchanter::default(),
+            hearth_channel: None,
+            determination_stacks: 0,
         }
     }
 }
@@ -647,8 +678,41 @@ impl Run {
             }
         }
 
+        if let Some(acc) = account {
+            for item in acc.equipped.values() {
+                item.apply_to_stats(&mut s, self.class.id);
+            }
+            if let Some(title) = acc.active_title_def() {
+                match title.stat {
+                    gear::StatType::Stamina => s.max_hp *= 1.0 + (title.bonus_value / 100.0),
+                    gear::StatType::Strength | gear::StatType::Intellect => {
+                        s.might *= 1.0 + (title.bonus_value / 100.0);
+                    }
+                    gear::StatType::Agility => s.speed *= 1.0 + (title.bonus_value / 100.0),
+                    gear::StatType::Crit => s.crit += title.bonus_value / 100.0,
+                    gear::StatType::Haste => s.haste += title.bonus_value / 100.0,
+                    _ => {}
+                }
+            }
+        }
+        for item in &self.equipped {
+            item.apply_to_stats(&mut s, self.class.id);
+        }
+
+        if self.determination_stacks > 0 {
+            let det = self.determination_stacks as f32;
+            s.might *= 1.0 + (0.05 * det);
+            s.max_hp *= 1.0 + (0.05 * det);
+        }
+
+        self.enchanter.apply_to_stats(&mut s);
+
         traits::race_trait(self.race).apply_stats(&mut s, self);
         s
+    }
+
+    pub fn has_glyph(&self, kind: glyphs::GlyphKind) -> bool {
+        self.glyphs.contains(&kind)
     }
 
     pub fn is_ultimate_active(&self, kind: ultimates::UltimateKind) -> bool {
@@ -711,13 +775,46 @@ fn unpause(mut time: ResMut<Time<Virtual>>) {
 /// Bank gold and record survival stats on run completion.
 fn record_game_over(
     mut account: ResMut<save::Account>,
-    run: Res<Run>,
+    mut run: ResMut<Run>,
     selection: Res<Selection>,
 ) {
     account.add_gold(run.gold);
     let zone = selection.map_def().name;
     let diff = selection.difficulty.name();
     account.record_run_result(zone, run.elapsed, run.level, diff);
+
+    // Vault extraction: transfer all vaulted items to persistent account armory
+    // If the run was won/extracted, also rescue unsecured backpack items!
+    if run.won {
+        account.armory.extend(run.vault.backpack.drain(..));
+        account.reset_determination(diff);
+        titles::check_title_unlocks(&mut account, true, run.is_hardcore, run.combo.max_combo, run.elapsed);
+    } else {
+        account.add_determination(diff);
+        titles::check_title_unlocks(&mut account, false, run.is_hardcore, run.combo.max_combo, run.elapsed);
+    }
+    run.vault.extract_to_account(&mut account);
+
+    // Hardcore death handling: record fallen hero in graveyard
+    if run.is_hardcore && run.hp <= 0.0 {
+        let civil = benilla_ui::civil::from_unix(benilla_ui::civil::unix_seconds());
+        let date_utc = format!("{:04}-{:02}-{:02}", civil.year, civil.month, civil.day);
+        let fallen = save::FallenHero {
+            name: run.class.name.to_string(),
+            race: run.race,
+            class: run.class.id,
+            level: run.level,
+            zone: zone.to_string(),
+            survived_secs: run.elapsed,
+            killed_by: run.killer_name.clone().unwrap_or_else(|| "The Horde".to_string()),
+            date_utc,
+            highest_spree: run.combo.max_combo,
+        };
+        account.graveyard.push(fallen);
+    }
+
+    // Persist extracted armory gear, high score records, and graveyard additions
+    let _ = account.save();
 }
 
 /// Back at the menu: everything the last run spawned goes, and the run starts over.
@@ -737,6 +834,8 @@ fn reset_run(
     let next_guid = run.next_guid;
     *run = Run {
         next_guid,
+        is_hardcore: selection.is_hardcore,
+        vault: vault::ExtractionVault::new(2),
         ..Run::default()
     };
     pending.0.clear();

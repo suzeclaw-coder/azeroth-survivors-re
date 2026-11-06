@@ -331,6 +331,25 @@ pub(super) fn drive_hero(
                 gp.just_pressed(GamepadButton::RightTrigger2)
                     || gp.just_pressed(GamepadButton::East)
             });
+            if run.hearth_channel.is_some()
+                && (dir != Vec3::ZERO
+                    || keys.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+                    || gp_dash
+                    || keys.just_pressed(KeyCode::Space))
+            {
+                run.hearth_channel = None;
+                run.banner = Some(("Hearthstone Interrupted!".to_string(), 1.5));
+            }
+            if playing && keys.just_pressed(KeyCode::KeyH) {
+                if run.hearth_channel.is_some() {
+                    run.hearth_channel = None;
+                    run.banner = Some(("Hearthstone Cancelled".to_string(), 1.2));
+                } else {
+                    run.hearth_channel = Some(8.0);
+                    fx.cast(me, 8690, &[me], None);
+                    run.banner = Some(("Channeling Hearthstone... Stand Still!".to_string(), 2.0));
+                }
+            }
             if playing
                 && (keys.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) || gp_dash)
                 && run.dash_cd <= 0.0
@@ -540,7 +559,6 @@ pub(super) fn hero_vitals(
     mut next: ResMut<NextState<Phase>>,
     mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), With<Hero>>,
     mut fields: MessageWriter<FieldChanged>,
-    mut fx: Fx,
 ) {
     let dt = time.delta_secs();
     let stats = run.stats();
@@ -595,19 +613,21 @@ pub(super) fn hero_vitals(
     marks.flush(entity, guid.0, &mut store, &mut fields);
 
     if run.hp <= 0.0 {
+        run.hearth_channel = None;
         run.hp = 0.0;
         run.dead_t = Some(0.0);
         units::kill_unit(&mut store);
         marks.clear();
         marks.flush(entity, guid.0, &mut store, &mut fields);
-    } else if run.elapsed >= data::VICTORY_SECS && !run.overtime {
-        run.won = true;
-        run.overtime = true;
-        fx.cast(entity, 642, &[entity], None);
-        run.banner = Some((
-            "Victory! Endless Overtime Begins — Survive if you can!".into(),
-            5.0,
-        ));
+    } else if let Some(h) = run.hearth_channel.as_mut() {
+        *h -= dt;
+        if *h <= 0.0 {
+            run.hearth_channel = None;
+            run.won = true;
+            next.set(Phase::GameOver);
+        }
+    } else if run.elapsed >= data::VICTORY_SECS && !run.overtime && !run.won {
+        next.set(Phase::PortalChoice);
     }
 }
 
@@ -632,6 +652,192 @@ fn gait(look: Vec3, dir: Vec3) -> u32 {
 
 pub(super) fn reach(hero: Vec3, other: Vec3) -> f32 {
     flat(other - hero).length()
+}
+
+/// Tactical range rings configuration.
+#[derive(Resource)]
+pub struct RangeRingSettings {
+    pub enabled: bool,
+    pub opacity: f32,
+    pub ring_thickness: f32,
+}
+
+impl Default for RangeRingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            opacity: 0.45,
+            ring_thickness: 0.18,
+        }
+    }
+}
+
+/// Tag component for spawned range ring visual entities.
+#[derive(Component)]
+pub(super) struct RangeRingMarker;
+
+/// Calculates dynamic inner melee reach, AoE radii, and outer range from owned abilities.
+pub(super) fn calculate_hero_ranges(run: &Run) -> (f32, Vec<f32>, f32) {
+    let mut min_melee = 5.5;
+    let mut aoe_radii = Vec::new();
+    let mut max_range = 5.5;
+    let stats = run.stats();
+
+    for owned in &run.abilities {
+        let def = owned.def;
+        if def.range > 0.0 {
+            if def.range <= 8.0 && (def.range < min_melee || min_melee == 5.5) {
+                min_melee = def.range;
+            }
+            if def.range > max_range {
+                max_range = def.range;
+            }
+        }
+        if def.radius > 0.0 {
+            let r = owned.radius(&stats);
+            if !aoe_radii.iter().any(|&existing: &f32| (existing - r).abs() < 0.1) {
+                aoe_radii.push(r);
+            }
+        }
+    }
+    (min_melee, aoe_radii, max_range)
+}
+
+/// Builds an annulus (flat ground ring) mesh with the given radius and radial thickness.
+pub(super) fn ring_mesh(radius: f32, thickness: f32) -> Mesh {
+    const SEGMENTS: usize = 48;
+    let r_inner = (radius - thickness * 0.5).max(0.1);
+    let r_outer = radius + thickness * 0.5;
+    let mut positions = Vec::with_capacity(SEGMENTS * 2);
+    let mut normals = Vec::with_capacity(SEGMENTS * 2);
+    let mut uvs = Vec::with_capacity(SEGMENTS * 2);
+    let mut indices = Vec::with_capacity(SEGMENTS * 6);
+
+    for i in 0..SEGMENTS {
+        let theta = (i as f32) / (SEGMENTS as f32) * std::f32::consts::TAU;
+        let sin = theta.sin();
+        let cos = theta.cos();
+        positions.push([r_inner * sin, 0.0, -r_inner * cos]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, (i as f32) / (SEGMENTS as f32)]);
+
+        positions.push([r_outer * sin, 0.0, -r_outer * cos]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, (i as f32) / (SEGMENTS as f32)]);
+    }
+
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        let i0 = (i * 2) as u32;
+        let i1 = (i * 2 + 1) as u32;
+        let n0 = (next * 2) as u32;
+        let n1 = (next * 2 + 1) as u32;
+        indices.extend_from_slice(&[i0, n0, i1]);
+        indices.extend_from_slice(&[i1, n0, n1]);
+    }
+
+    let mut mesh = Mesh::new(
+        bevy::mesh::PrimitiveTopology::TriangleList,
+        bevy::asset::RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+    mesh
+}
+
+/// Spawns or repositions ground range ring decals around the active hero.
+pub(super) fn update_range_rings(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<RangeRingSettings>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    hero: Query<&Transform, With<Hero>>,
+    mut rings: Query<(Entity, &mut Transform), (With<RangeRingMarker>, Without<Hero>)>,
+    phase: Res<State<Phase>>,
+    run: Res<Run>,
+    mut last_version: Local<Option<u32>>,
+) {
+    if keys.just_pressed(KeyCode::KeyO) {
+        settings.enabled = !settings.enabled;
+    }
+
+    if *phase.get() != Phase::Playing || !settings.enabled || run.dead_t.is_some() {
+        for (e, _) in &rings {
+            commands.entity(e).despawn();
+        }
+        *last_version = None;
+        return;
+    }
+
+    let Ok(hero_tf) = hero.single() else {
+        return;
+    };
+
+    if *last_version != Some(run.version) || rings.iter().count() == 0 {
+        *last_version = Some(run.version);
+        for (e, _) in &rings {
+            commands.entity(e).despawn();
+        }
+
+        let (melee_range, aoe_ranges, outer_range) = calculate_hero_ranges(&run);
+
+        let melee_color = Color::srgba(1.0, 0.8, 0.2, settings.opacity);
+        let aoe_color = Color::srgba(0.2, 0.8, 1.0, settings.opacity);
+        let outer_color = Color::srgba(0.8, 0.3, 0.9, settings.opacity * 0.7);
+
+        let primary_rings = [
+            (melee_range, melee_color),
+            (outer_range, outer_color),
+        ];
+
+        for (r, col) in primary_rings {
+            let mesh = meshes.add(ring_mesh(r, settings.ring_thickness));
+            let mat = materials.add(StandardMaterial {
+                base_color: col,
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                cull_mode: None,
+                depth_bias: 40.0,
+                ..default()
+            });
+            commands.spawn((
+                RangeRingMarker,
+                super::RunEntity,
+                Mesh3d(mesh),
+                MeshMaterial3d(mat),
+                Transform::from_translation(hero_tf.translation + Vec3::Y * 0.05),
+            ));
+        }
+
+        for &aoe_r in &aoe_ranges {
+            if (aoe_r - melee_range).abs() > 0.5 && (aoe_r - outer_range).abs() > 0.5 {
+                let mesh = meshes.add(ring_mesh(aoe_r, settings.ring_thickness));
+                let mat = materials.add(StandardMaterial {
+                    base_color: aoe_color,
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    cull_mode: None,
+                    depth_bias: 40.0,
+                    ..default()
+                });
+                commands.spawn((
+                    RangeRingMarker,
+                    super::RunEntity,
+                    Mesh3d(mesh),
+                    MeshMaterial3d(mat),
+                    Transform::from_translation(hero_tf.translation + Vec3::Y * 0.05),
+                ));
+            }
+        }
+    } else {
+        let ring_pos = hero_tf.translation + Vec3::Y * 0.05;
+        for (_, mut rtf) in &mut rings {
+            rtf.translation = ring_pos;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -80,7 +80,7 @@ fn apply_upgrade_step(run: &mut Run, rng: &mut Rng) {
     let choices = hud::choices_for(run, rng);
     let available: Vec<Choice> = choices
         .into_iter()
-        .filter(|c| !matches!(c, Choice::Heal))
+        .filter(|c| !matches!(c, Choice::Heal | Choice::Gold(_) | Choice::UltimateSurge))
         .collect();
 
     if !available.is_empty() {
@@ -116,7 +116,7 @@ fn apply_upgrade_step(run: &mut Run, rng: &mut Rng) {
                     run.pending_minions.push(m.kind);
                 }
             }
-            Choice::Heal => unreachable!(),
+            Choice::Heal | Choice::Gold(_) | Choice::UltimateSurge => unreachable!(),
         }
         run.version += 1;
     } else {

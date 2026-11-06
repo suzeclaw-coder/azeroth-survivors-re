@@ -185,6 +185,9 @@ pub(super) fn tick_hazards(
                         let taken = hero::hurt_hero(&mut run, *damage);
                         if taken > 0.0 {
                             fx.number(hero_e, taken, false, 0xFFFF_4500);
+                            if run.hp <= 0.0 && run.killer_name.is_none() {
+                                run.killer_name = Some("Artillery Bombardment".to_string());
+                            }
                         }
                     }
                     commands.entity(e).despawn();
@@ -207,6 +210,9 @@ pub(super) fn tick_hazards(
                     let taken = hero::hurt_hero(&mut run, 18.0 * dt);
                     if taken > 0.0 {
                         fx.number(hero_e, taken, false, units::COLOR_HURT);
+                        if run.hp <= 0.0 && run.killer_name.is_none() {
+                            run.killer_name = Some("Dust Devil".to_string());
+                        }
                     }
                 }
             }
@@ -227,6 +233,9 @@ pub(super) fn tick_hazards(
                     let taken = hero::hurt_hero(&mut run, 12.0 * dt);
                     if taken > 0.0 {
                         fx.number(hero_e, taken, false, 0xFF00_FF66);
+                        if run.hp <= 0.0 && run.killer_name.is_none() {
+                            run.killer_name = Some("Plague Cloud".to_string());
+                        }
                     }
                 }
             }

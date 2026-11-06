@@ -49,6 +49,7 @@ pub(super) enum MenuAction {
     Enter,
     CycleDifficulty,
     CycleAffixes,
+    ToggleHardcore,
     Upgrade(UpgradeKind),
     RefundUpgrades,
 }
@@ -62,6 +63,9 @@ pub(super) struct TowerGoldText;
 
 #[derive(Component)]
 pub(super) struct ArmoryGoldText;
+
+#[derive(Component)]
+pub(super) struct HardcoreText;
 
 #[derive(Component)]
 pub(super) struct UpgradeRankText(pub(super) UpgradeKind);
@@ -125,10 +129,11 @@ fn save_pick(sel: &Selection) {
         data::Difficulty::Nightmare => 3,
     };
     let affix_idx = sel.affixes.preset_idx();
+    let hc_val = if sel.is_hardcore { 1 } else { 0 };
     if let Some(path) = pick_path() {
         let _ = crate::local_state::write_atomic(
             &path,
-            &format!("{class} {race} {sex} {} {diff_idx} {affix_idx}", sel.map),
+            &format!("{class} {race} {sex} {} {diff_idx} {affix_idx} {hc_val}", sel.map),
         );
     }
 }
@@ -167,6 +172,9 @@ pub(super) fn restore_pick(
     selection.difficulty = difficulty;
     if let Some(&affix_idx) = v.get(5) {
         selection.affixes = data::ChallengeAffixes::from_preset(affix_idx);
+    }
+    if let Some(&hc_val) = v.get(6) {
+        selection.is_hardcore = hc_val != 0;
     }
     if map < data::MAPS.len() {
         selection.map = map;
@@ -647,6 +655,74 @@ fn zone_frame(
         let affixes = selection.affixes;
         let kind = GlueBtnKind::Normal;
 
+        // Hardcore Mode Toggle Button
+        let mut b_hc = frame.spawn((
+            MenuAction::ToggleHardcore,
+            GlueBtn,
+            GlueDisabled(false),
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(24.0),
+                bottom: px(98.0),
+                width: px(ROW_W),
+                height: px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ));
+        let tc = kind.tex_coords();
+        if let Some(tc) = tc {
+            b_hc.insert(tc);
+        }
+        match &art.button_up {
+            Some((up, size)) => {
+                b_hc.insert(ImageNode {
+                    image: up.clone(),
+                    rect: Some(tc_rect(*size, tc.map(|t| t.0).unwrap_or(BUTTON_TC))),
+                    ..default()
+                });
+            }
+            None => {
+                b_hc.insert((FallbackFace, BackgroundColor(BTN_BG)));
+            }
+        }
+        b_hc.with_children(|inner| {
+            if let Some(hi) = &art.button_hi {
+                inner.spawn((
+                    Hilight,
+                    Visibility::Hidden,
+                    MaterialNode(hi.clone()),
+                    overlay(),
+                ));
+            }
+            let (font_size, offset) = kind.caption();
+            let (label, color) = if selection.is_hardcore {
+                ("[x] Hardcore (Mortal)", Color::srgb(1.0, 0.25, 0.25))
+            } else {
+                ("[ ] Standard (Softcore)", Color::srgb(0.8, 0.8, 0.8))
+            };
+            outlined_text(
+                inner,
+                Node {
+                    left: Val::Px(offset.x),
+                    top: Val::Px(1.0 - offset.y),
+                    ..default()
+                },
+                (),
+                HardcoreText,
+                GlueText {
+                    text: label,
+                    size: font_size - 1.0,
+                    color,
+                    wrap: false,
+                },
+                f,
+                1.0,
+            );
+        });
+
         // Challenge Affixes Cycle Button
         let mut b_affix = frame.spawn((
             MenuAction::CycleAffixes,
@@ -933,12 +1009,14 @@ fn armory_frame(
             ArmoryGoldText,
             GlueText {
                 text: &format!(
-                    "Gold: {}g  |  Trophies: {}/{}",
+                    "Gold: {}g | Gear: {}/{} | Trophies: {}/{}",
                     account.gold,
+                    account.equipped.len(),
+                    account.armory.len(),
                     account.achievements.len(),
                     super::achievements::ACHIEVEMENTS.len()
                 ),
-                size: 14.0,
+                size: 13.0,
                 color: GOLD,
                 wrap: false,
             },
@@ -1029,6 +1107,96 @@ fn armory_frame(
                     );
                 });
         }
+
+        // Graveyard Memorial Hall
+        frame
+            .spawn(Node {
+                position_type: PositionType::Absolute,
+                left: px(12.0),
+                top: px(444.0),
+                width: px(row_w),
+                height: px(142.0),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            })
+            .with_children(|g| {
+                outlined_text(
+                    g,
+                    Node {
+                        margin: UiRect::bottom(px(4.0)),
+                        ..default()
+                    },
+                    (),
+                    (),
+                    GlueText {
+                        text: "Graveyard Memorial",
+                        size: 13.0,
+                        color: GOLD,
+                        wrap: false,
+                    },
+                    f,
+                    1.0,
+                );
+
+                if account.graveyard.is_empty() {
+                    outlined_text(
+                        g,
+                        Node::default(),
+                        (),
+                        (),
+                        GlueText {
+                            text: "No fallen legends. Walk with honor!",
+                            size: 10.5,
+                            color: Color::srgb(0.65, 0.65, 0.65),
+                            wrap: false,
+                        },
+                        f,
+                        1.0,
+                    );
+                } else {
+                    for hero in account.graveyard.iter().rev().take(2) {
+                        let mins = hero.survived_secs as u32 / 60;
+                        let secs = hero.survived_secs as u32 % 60;
+                        let line1 = format!("† {} Lvl {} ({})", hero.name, hero.level, hero.zone);
+                        let line2 = format!("Slain by {} ({:02}:{:02})", hero.killed_by, mins, secs);
+
+                        outlined_text(
+                            g,
+                            Node {
+                                margin: UiRect::bottom(px(1.0)),
+                                ..default()
+                            },
+                            (),
+                            (),
+                            GlueText {
+                                text: &line1,
+                                size: 10.5,
+                                color: Color::srgb(0.9, 0.4, 0.4),
+                                wrap: false,
+                            },
+                            f,
+                            1.0,
+                        );
+                        outlined_text(
+                            g,
+                            Node {
+                                margin: UiRect::bottom(px(4.0)),
+                                ..default()
+                            },
+                            (),
+                            (),
+                            GlueText {
+                                text: &line2,
+                                size: 9.5,
+                                color: Color::srgb(0.7, 0.7, 0.7),
+                                wrap: false,
+                            },
+                            f,
+                            1.0,
+                        );
+                    }
+                }
+            });
 
         let refund_btn_w = 210.0;
         let refund_btn_h = 32.0;
@@ -1155,6 +1323,10 @@ pub(super) fn menu_clicks(
             selection.affixes = selection.affixes.next();
             selection.version += 1;
         }
+        MenuAction::ToggleHardcore => {
+            selection.is_hardcore = !selection.is_hardcore;
+            selection.version += 1;
+        }
     }
     save_pick(&selection);
 }
@@ -1191,6 +1363,7 @@ pub(super) fn refresh_menu_ui(
         )>,
         Query<(&mut Text, &mut TextColor), With<RacialTraitText>>,
         Query<(&mut Text, &mut TextColor), With<AffixText>>,
+        Query<(&mut Text, &mut TextColor), With<HardcoreText>>,
     )>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
 ) {
@@ -1223,7 +1396,8 @@ pub(super) fn refresh_menu_ui(
             MenuAction::Randomize
             | MenuAction::Enter
             | MenuAction::CycleDifficulty
-            | MenuAction::CycleAffixes => false,
+            | MenuAction::CycleAffixes
+            | MenuAction::ToggleHardcore => false,
             MenuAction::Upgrade(_) | MenuAction::RefundUpgrades => false,
         };
         if let Some(mut lock) = lock {
@@ -1296,7 +1470,14 @@ pub(super) fn refresh_menu_ui(
     let display_race = hovered_race.or(cur.map(|c| c.0));
     if let Ok((mut t, mut color)) = texts.p0().single_mut() {
         let want = match (class, display_race) {
-            (Some(c), Some(r)) => format!("{} {}", race_name(r), c.name),
+            (Some(c), Some(r)) => {
+                let base = format!("{} {}", race_name(r), c.name);
+                if let Some(title) = account.active_title_def() {
+                    format!("{} {}", base, title.title)
+                } else {
+                    base
+                }
+            }
             _ => String::new(),
         };
         if t.0 != want {
@@ -1339,7 +1520,14 @@ pub(super) fn refresh_menu_ui(
     }
 
     for (mut t, mut color) in &mut texts.p1() {
-        let want = format!("Difficulty: {}", selection.difficulty.name());
+        let diff_name = selection.difficulty.name();
+        let det = account.determination_for(diff_name);
+        let det_suffix = if det > 0 {
+            format!(" (+{}% Pity)", det * 5)
+        } else {
+            String::new()
+        };
+        let want = format!("Difficulty: {}{}", diff_name, det_suffix);
         if t.0 != want {
             t.0 = want;
         }
@@ -1360,11 +1548,27 @@ pub(super) fn refresh_menu_ui(
         }
     }
 
+    for (mut t, mut color) in &mut texts.p5() {
+        let (want, want_color) = if selection.is_hardcore {
+            ("[x] Hardcore (Mortal)", Color::srgb(1.0, 0.25, 0.25))
+        } else {
+            ("[ ] Standard (Softcore)", Color::srgb(0.8, 0.8, 0.8))
+        };
+        if t.0 != want {
+            t.0 = want.to_string();
+        }
+        if color.0 != want_color {
+            color.0 = want_color;
+        }
+    }
+
     for (mut text, is_tower, is_armory, rank_opt, btn_opt, bonus_opt) in &mut texts.p2() {
         if is_armory.is_some() {
             let want = format!(
-                "Gold: {}g  |  Trophies: {}/{}",
+                "Gold: {}g | Gear: {}/{} | Trophies: {}/{}",
                 account.gold,
+                account.equipped.len(),
+                account.armory.len(),
                 account.achievements.len(),
                 super::achievements::ACHIEVEMENTS.len()
             );
