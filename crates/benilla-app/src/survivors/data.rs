@@ -1852,6 +1852,8 @@ pub(crate) enum ShrineKind {
     Swiftness,
     Storm,
     Greed,
+    BloodAltar,
+    CursedGreed,
 }
 
 impl ShrineKind {
@@ -1861,6 +1863,8 @@ impl ShrineKind {
             ShrineKind::Swiftness => "Swiftness Shrine",
             ShrineKind::Storm => "Storm Shrine",
             ShrineKind::Greed => "Greed Shrine",
+            ShrineKind::BloodAltar => "Blood Altar",
+            ShrineKind::CursedGreed => "Cursed Greed Altar",
         }
     }
 
@@ -1870,6 +1874,8 @@ impl ShrineKind {
             ShrineKind::Swiftness => "+50% Speed & Instant Dash",
             ShrineKind::Storm => "Chain Lightning Pulses",
             ShrineKind::Greed => "4x Magnet & Gem Values",
+            ShrineKind::BloodAltar => "Sacrifice 30% HP for +15% Might & Free Card",
+            ShrineKind::CursedGreed => "+25% Horde Speed for 3x Gold Drop",
         }
     }
 
@@ -1880,6 +1886,8 @@ impl ShrineKind {
             ShrineKind::Swiftness => (121, 1.5), // Shrine
             ShrineKind::Storm => (105, 1.5),     // Altar
             ShrineKind::Greed => (259, 1.8),     // Treasure Chest
+            ShrineKind::BloodAltar => (105, 1.8), // Dark Stone Altar
+            ShrineKind::CursedGreed => (121, 1.8), // Golden Relic Altar
         }
     }
 }
@@ -1924,6 +1932,8 @@ pub(crate) static MAPS: &[MapDef] = &[
             ShrineDef { kind: ShrineKind::Swiftness, pos: [-910.0, -2700.0, 92.0] },
             ShrineDef { kind: ShrineKind::Storm, pos: [-990.0, -2700.0, 92.0] },
             ShrineDef { kind: ShrineKind::Greed, pos: [-950.0, -2740.0, 92.0] },
+            ShrineDef { kind: ShrineKind::BloodAltar, pos: [-930.0, -2680.0, 92.0] },
+            ShrineDef { kind: ShrineKind::CursedGreed, pos: [-970.0, -2720.0, 92.0] },
         ],
         foes: &[],
         bosses: &[],
@@ -2112,6 +2122,8 @@ pub(crate) static MAPS: &[MapDef] = &[
             ShrineDef { kind: ShrineKind::Swiftness, pos: [-9508.5, 115.0, 60.0] },
             ShrineDef { kind: ShrineKind::Storm, pos: [-9588.5, 115.0, 60.0] },
             ShrineDef { kind: ShrineKind::Greed, pos: [-9548.5, 75.0, 60.0] },
+            ShrineDef { kind: ShrineKind::BloodAltar, pos: [-9528.5, 135.0, 60.0] },
+            ShrineDef { kind: ShrineKind::CursedGreed, pos: [-9568.5, 95.0, 60.0] },
         ],
         foes: &[
             foe("Young Wolf", 447, 1, 5.4, 1.0),

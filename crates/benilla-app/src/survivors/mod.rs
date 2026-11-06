@@ -32,6 +32,7 @@ pub mod minions;
 mod mobility;
 pub(crate) mod save;
 mod shrines;
+pub mod skillshot;
 pub mod specs;
 mod telegraphs;
 pub mod titles;
@@ -96,6 +97,7 @@ impl Plugin for SurvivorsPlugin {
                     hero::drop_stray_buttons,
                     hero::aim_cursor,
                     mobility::cast_mobility,
+                    skillshot::cast_skillshot,
                     ultimates::cast_ultimate,
                     hero::drive_hero,
                     hero::place_camera,
@@ -111,6 +113,7 @@ impl Plugin for SurvivorsPlugin {
                         enemies::spawn_enemies,
                         enemies::move_enemies,
                         enemies::tick_molten_fire,
+                        enemies::tick_boss_arena,
                         hazards::tick_hazards,
                         achievements::check_achievements,
                         telegraphs::update_telegraphs,
@@ -127,6 +130,7 @@ impl Plugin for SurvivorsPlugin {
                         events::tick_world_events,
                         traits::tick_racial_traits,
                         abilities::cast_abilities,
+                        skillshot::tick_skillshot,
                         evolutions::tick_evolutions,
                         ultimates::tick_ultimates,
                     ),
@@ -178,6 +182,7 @@ impl Plugin for SurvivorsPlugin {
                         ),
                         (
                             hud::refresh_dash,
+                            hud::refresh_skillshot,
                             hud::refresh_ultimate,
                             hud::refresh_blood_moon,
                             hud::refresh_critical_vignette,
@@ -466,6 +471,8 @@ pub(super) struct Run {
     pub dash_cd: f32,
     pub dash_max_cd: f32,
     pub iframe_t: f32,
+    pub skillshot_cd: f32,
+    pub skillshot_max_cd: f32,
     pub rerolls: u32,
     pub skips: u32,
     pub banishes: u32,
@@ -533,6 +540,8 @@ impl Default for Run {
             dash_cd: 0.0,
             dash_max_cd: 3.0,
             iframe_t: 0.0,
+            skillshot_cd: 0.0,
+            skillshot_max_cd: 2.0,
             rerolls: 2,
             skips: 1,
             banishes: 2,
@@ -624,6 +633,9 @@ impl Run {
             s.magnet *= 4.0;
             s.growth *= 2.0;
         }
+        if let Some((data::ShrineKind::CursedGreed, _)) = self.shrine_buff {
+            s.gold_bonus *= 3.0;
+        }
         if self.vacuum_gems > 0.0 {
             s.magnet = 9999.0;
         }
@@ -682,6 +694,7 @@ impl Run {
             for item in acc.equipped.values() {
                 item.apply_to_stats(&mut s, self.class.id);
             }
+            gear::apply_set_bonuses(acc.equipped.values(), &mut s);
             if let Some(title) = acc.active_title_def() {
                 match title.stat {
                     gear::StatType::Stamina => s.max_hp *= 1.0 + (title.bonus_value / 100.0),
@@ -698,6 +711,7 @@ impl Run {
         for item in &self.equipped {
             item.apply_to_stats(&mut s, self.class.id);
         }
+        gear::apply_set_bonuses(&self.equipped, &mut s);
 
         if self.determination_stacks > 0 {
             let det = self.determination_stacks as f32;

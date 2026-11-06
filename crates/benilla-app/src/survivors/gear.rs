@@ -11,6 +11,56 @@ use serde::{Deserialize, Serialize};
 
 use super::{Rng, Stats};
 
+/// Themed item set identifiers granting 2-piece and 4-piece synergies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GearSet {
+    DefiasLeather,   // Rogue / Agility: 2pc Crit, 4pc Speed
+    ValorPlate,      // Warrior / Paladin: 2pc Armor, 4pc Max HP
+    MagisterRegalia, // Mage / Priest / Warlock: 2pc Area, 4pc Haste
+    Shadowcraft,     // Rogue / Hunter: 2pc Haste, 4pc Crit
+    TheElements,     // Shaman / Druid: 2pc Might, 4pc HP Regen
+}
+
+impl GearSet {
+    pub const ALL: [GearSet; 5] = [
+        GearSet::DefiasLeather,
+        GearSet::ValorPlate,
+        GearSet::MagisterRegalia,
+        GearSet::Shadowcraft,
+        GearSet::TheElements,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::DefiasLeather => "Defias Leather",
+            Self::ValorPlate => "Battlegear of Valor",
+            Self::MagisterRegalia => "Magister's Regalia",
+            Self::Shadowcraft => "Shadowcraft Armor",
+            Self::TheElements => "The Elements",
+        }
+    }
+
+    pub fn bonus_2pc_desc(&self) -> &'static str {
+        match self {
+            Self::DefiasLeather => "(2) Set: +12% Critical Strike",
+            Self::ValorPlate => "(2) Set: +20 Armor",
+            Self::MagisterRegalia => "(2) Set: +20% Spell Area",
+            Self::Shadowcraft => "(2) Set: +15% Haste",
+            Self::TheElements => "(2) Set: +15% Might",
+        }
+    }
+
+    pub fn bonus_4pc_desc(&self) -> &'static str {
+        match self {
+            Self::DefiasLeather => "(4) Set: +20% Movement Speed",
+            Self::ValorPlate => "(4) Set: +25% Maximum Health",
+            Self::MagisterRegalia => "(4) Set: +20% Haste",
+            Self::Shadowcraft => "(4) Set: +15% Critical Strike",
+            Self::TheElements => "(4) Set: +6.0 Health Regen / sec",
+        }
+    }
+}
+
 /// Stat types that appear on gear items.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -149,6 +199,8 @@ pub struct GearItem {
     pub stats: HashMap<StatType, f32>,
     pub display_id: u32,
     pub icon_spell: u32,
+    #[serde(default)]
+    pub set: Option<GearSet>,
 }
 
 impl GearItem {
@@ -272,7 +324,17 @@ pub fn generate_gear(rng: &mut Rng, ilvl: u32, quality_bias: f32) -> GearItem {
         ItemQuality::Legendary => "Mythical ",
     };
 
-    let item_name = format!("{}{}", quality_prefix, name);
+    let set = if quality >= ItemQuality::Rare && rng.f32() < 0.45 {
+        Some(GearSet::ALL[rng.index(GearSet::ALL.len())])
+    } else {
+        None
+    };
+
+    let item_name = if let Some(s) = set {
+        format!("{}{} of {}", quality_prefix, name, s.name())
+    } else {
+        format!("{}{}", quality_prefix, name)
+    };
     let id = 0xFFFF_0000 | ((rng.next_u64() as u32) & 0xFFFF);
 
     GearItem {
@@ -284,12 +346,127 @@ pub fn generate_gear(rng: &mut Rng, ilvl: u32, quality_bias: f32) -> GearItem {
         stats,
         display_id,
         icon_spell,
+        set,
+    }
+}
+
+/// Applies cumulative 2-piece and 4-piece set bonuses from equipped gear.
+pub fn apply_set_bonuses<'a, I>(items: I, stats: &mut Stats)
+where
+    I: IntoIterator<Item = &'a GearItem>,
+{
+    let mut counts: HashMap<GearSet, usize> = HashMap::new();
+    for item in items {
+        if let Some(set) = item.set {
+            *counts.entry(set).or_default() += 1;
+        }
+    }
+
+    for (set, count) in counts {
+        if count >= 2 {
+            match set {
+                GearSet::DefiasLeather => stats.crit += 0.12,
+                GearSet::ValorPlate => stats.armor += 0.20,
+                GearSet::MagisterRegalia => stats.area *= 1.20,
+                GearSet::Shadowcraft => stats.haste += 0.15,
+                GearSet::TheElements => stats.might *= 1.15,
+            }
+        }
+        if count >= 4 {
+            match set {
+                GearSet::DefiasLeather => stats.speed *= 1.20,
+                GearSet::ValorPlate => stats.max_hp *= 1.25,
+                GearSet::MagisterRegalia => stats.haste += 0.20,
+                GearSet::Shadowcraft => stats.crit += 0.15,
+                GearSet::TheElements => stats.regen += 6.0,
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_gear_set_bonuses() {
+        let mut stats = Stats {
+            might: 1.0,
+            max_hp: 100.0,
+            speed: 7.0,
+            regen: 0.0,
+            haste: 0.0,
+            area: 1.0,
+            magnet: 4.5,
+            growth: 1.0,
+            armor: 0.0,
+            crit: 0.05,
+            xp_bonus: 1.0,
+            gold_bonus: 1.0,
+            evasion: 0.0,
+            stun_res: 0.0,
+        };
+
+        let item1 = GearItem {
+            id: 1,
+            name: "Valor Helm".into(),
+            slot: EquipSlot::Head,
+            quality: ItemQuality::Epic,
+            item_level: 40,
+            stats: HashMap::new(),
+            display_id: 1,
+            icon_spell: 1,
+            set: Some(GearSet::ValorPlate),
+        };
+        let item2 = GearItem {
+            id: 2,
+            name: "Valor Chest".into(),
+            slot: EquipSlot::Chest,
+            quality: ItemQuality::Epic,
+            item_level: 40,
+            stats: HashMap::new(),
+            display_id: 2,
+            icon_spell: 2,
+            set: Some(GearSet::ValorPlate),
+        };
+
+        // 2-piece Valor should grant +0.20 armor
+        apply_set_bonuses(&[item1.clone(), item2.clone()], &mut stats);
+        assert!((stats.armor - 0.20).abs() < 1e-4);
+
+        // 4-piece Valor should also grant +25% max HP
+        let item3 = GearItem {
+            id: 3,
+            name: "Valor Shoulders".into(),
+            slot: EquipSlot::Shoulders,
+            quality: ItemQuality::Epic,
+            item_level: 40,
+            stats: HashMap::new(),
+            display_id: 3,
+            icon_spell: 3,
+            set: Some(GearSet::ValorPlate),
+        };
+        let item4 = GearItem {
+            id: 4,
+            name: "Valor Legs".into(),
+            slot: EquipSlot::Legs,
+            quality: ItemQuality::Epic,
+            item_level: 40,
+            stats: HashMap::new(),
+            display_id: 4,
+            icon_spell: 4,
+            set: Some(GearSet::ValorPlate),
+        };
+
+        let mut stats4 = Stats {
+            max_hp: 100.0,
+            armor: 0.0,
+            ..stats
+        };
+        apply_set_bonuses(&[item1, item2, item3, item4], &mut stats4);
+        assert!((stats4.armor - 0.20).abs() < 1e-4);
+        assert!((stats4.max_hp - 125.0).abs() < 1e-4);
+    }
 
     #[test]
     fn test_gear_stats_application() {
@@ -324,6 +501,7 @@ mod tests {
             stats: gear_stats,
             display_id: 1234,
             icon_spell: 28273,
+            set: None,
         };
 
         // For Warrior (class 1)
@@ -344,6 +522,7 @@ mod tests {
             stats: HashMap::new(),
             display_id: 100,
             icon_spell: 28275,
+            set: None,
         };
         // 20 * 5 * 12 = 1200
         assert_eq!(item.salvage_value(), 1200);

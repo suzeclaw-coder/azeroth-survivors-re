@@ -139,6 +139,10 @@ pub(super) struct DashStatus;
 #[derive(Component)]
 pub(super) struct DashStatusText;
 #[derive(Component)]
+pub(super) struct SkillshotStatus;
+#[derive(Component)]
+pub(super) struct SkillshotStatusText;
+#[derive(Component)]
 pub(super) struct UltimateStatus;
 #[derive(Component)]
 pub(super) struct UltimateStatusText;
@@ -970,7 +974,7 @@ pub(super) fn setup_hud(
                     position_type: PositionType::Absolute,
                     left: Val::Percent(50.0),
                     bottom: Val::Px(88.0),
-                    margin: UiRect::left(Val::Px(-75.0)),
+                    margin: UiRect::left(Val::Px(-160.0)),
                     width: Val::Px(150.0),
                     height: Val::Px(24.0),
                     padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
@@ -985,6 +989,29 @@ pub(super) fn setup_hud(
             ))
             .with_children(|b| {
                 b.spawn((DashStatusText, centered(f, "DASH [Shift]: READY", 11.0, GOLD)));
+            });
+            // Manual skillshot status HUD indicator.
+            root.spawn((
+                SkillshotStatus,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(88.0),
+                    margin: UiRect::left(Val::Px(10.0)),
+                    width: Val::Px(150.0),
+                    height: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BorderColor::all(EDGE),
+                BackgroundColor(BUTTON),
+            ))
+            .with_children(|b| {
+                b.spawn((SkillshotStatusText, centered(f, "[L-Click] Skillshot: READY", 11.0, GOLD)));
             });
             // Ultimate status / energy meter HUD indicator.
             root.spawn((
@@ -2688,6 +2715,47 @@ pub(super) fn refresh_dash(
     }
 }
 
+/// The manual skillshot status indicator: shows ready state or cooldown.
+pub(super) fn refresh_skillshot(
+    run: Res<Run>,
+    mut status: Query<(&mut BorderColor, &mut BackgroundColor), With<SkillshotStatus>>,
+    mut text: Query<(&mut Text, &mut TextColor), With<SkillshotStatusText>>,
+) {
+    let def = super::skillshot::class_skillshot(run.class.id);
+    let (msg, color, border, bg) = if run.skillshot_cd <= 0.0 {
+        (
+            format!("[L-Click] {}: READY", def.name),
+            GOLD,
+            BorderColor::all(EDGE),
+            BackgroundColor(BUTTON),
+        )
+    } else {
+        (
+            format!("[L-Click] {}: {:.1}s", def.name, run.skillshot_cd),
+            DIM,
+            BorderColor::all(Color::srgba(0.35, 0.3, 0.2, 0.6)),
+            BackgroundColor(Color::srgba(0.1, 0.05, 0.05, 0.85)),
+        )
+    };
+
+    if let Ok((mut t, mut col)) = text.single_mut() {
+        if **t != msg {
+            **t = msg;
+        }
+        if col.0 != color {
+            col.0 = color;
+        }
+    }
+    if let Ok((mut b_col, mut b_bg)) = status.single_mut() {
+        if *b_col != border {
+            *b_col = border;
+        }
+        if *b_bg != bg {
+            *b_bg = bg;
+        }
+    }
+}
+
 /// The ultimate status indicator & energy meter: shows charging percent, ready state, or active duration.
 pub(super) fn refresh_ultimate(
     run: Res<Run>,
@@ -2977,6 +3045,16 @@ pub(super) fn refresh_shrine_buff(
                 BorderColor::all(Color::srgb(1.0, 0.7, 0.1)),
                 BackgroundColor(Color::srgba(0.3, 0.2, 0.05, 0.95)),
                 Color::srgb(1.0, 0.85, 0.2),
+            ),
+            data::ShrineKind::BloodAltar => (
+                BorderColor::all(Color::srgb(0.9, 0.15, 0.2)),
+                BackgroundColor(Color::srgba(0.3, 0.05, 0.05, 0.95)),
+                Color::srgb(1.0, 0.3, 0.3),
+            ),
+            data::ShrineKind::CursedGreed => (
+                BorderColor::all(Color::srgb(0.9, 0.6, 0.1)),
+                BackgroundColor(Color::srgba(0.25, 0.15, 0.05, 0.95)),
+                Color::srgb(1.0, 0.8, 0.2),
             ),
         };
         (Display::Flex, msg, col, border, bg)

@@ -9,7 +9,7 @@ use super::data::ShrineKind;
 use super::enemies::Enemy;
 use super::hero::Hero;
 use super::units::{self, flat, Fx, COLOR_SPELL};
-use super::{Rng, Run, Selection};
+use super::{Phase, Rng, Run, Selection};
 
 const SHRINE_RADIUS: f32 = 6.0;
 const CHANNEL_REQUIRED: f32 = 4.0;
@@ -56,6 +56,7 @@ pub(super) fn tick_shrines(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
+    mut next_phase: ResMut<NextState<Phase>>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     mut shrines: Query<(Entity, &Transform, &mut Shrine)>,
     enemies: Query<(Entity, &Transform, &Enemy)>,
@@ -132,6 +133,18 @@ pub(super) fn tick_shrines(
                         fx.impact(hero_e, 19740);
                         fx.impact(shrine_e, 20484);
                     }
+                    ShrineKind::BloodAltar => {
+                        fx.impact(hero_e, 30513);
+                        fx.impact(shrine_e, 30513);
+                        let sacrifice = (run.hp * 0.30).max(10.0);
+                        run.hp = (run.hp - sacrifice).max(1.0);
+                        run.pending_levels += 1;
+                        next_phase.set(Phase::LevelUp);
+                    }
+                    ShrineKind::CursedGreed => {
+                        fx.impact(hero_e, 19740);
+                        fx.impact(shrine_e, 20484);
+                    }
                 }
             }
         } else if shrine.channel_t > 0.0 {
@@ -193,8 +206,8 @@ pub(super) fn tick_shrines(
                     }
                 }
             }
-            ShrineKind::Greed => {
-                // Greed buff effects (4x magnet and 2x growth) are handled via Run::stats().
+            ShrineKind::Greed | ShrineKind::BloodAltar | ShrineKind::CursedGreed => {
+                // Greed and Cursed Greed buff effects are handled via Run::stats().
             }
         }
 

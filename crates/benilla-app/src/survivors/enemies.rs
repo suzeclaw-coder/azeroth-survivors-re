@@ -83,6 +83,33 @@ pub struct MoltenFirePatch {
     pub pos: Vec3,
 }
 
+/// Confines the battlefield during major boss encounters.
+#[derive(Component)]
+pub struct BossArena {
+    pub center: Vec3,
+    pub radius: f32,
+    pub left: f32,
+}
+
+/// Tempo phases alternating between standard horde, swarms, and brutes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WaveTempo {
+    Standard,
+    SwarmSurge,
+    BruteVanguard,
+}
+
+pub fn current_wave_tempo(elapsed: f32) -> WaveTempo {
+    let sec = (elapsed % 60.0) as u32;
+    if (35..48).contains(&sec) {
+        WaveTempo::SwarmSurge
+    } else if sec >= 48 {
+        WaveTempo::BruteVanguard
+    } else {
+        WaveTempo::Standard
+    }
+}
+
 #[derive(Component)]
 pub(super) struct Enemy {
     pub def: &'static EnemyDef,
@@ -110,6 +137,7 @@ pub(super) struct Enemy {
     pub cast_t: f32,
     pub current_ability: Option<&'static data::BossAbilityDef>,
     pub ability_idx: usize,
+    pub enraged: bool,
 }
 
 pub(super) struct Dot {
@@ -250,6 +278,7 @@ pub(super) fn spawn_enemy(
             cast_t: 0.0,
             current_ability: None,
             ability_idx: 0,
+            enraged: false,
         },
         Marks::debuffs(),
     ));
@@ -299,8 +328,16 @@ pub(super) fn spawn_enemies(
         );
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, true, mult, None);
         run.bosses += 1;
-        run.banner = Some((format!("{} approaches!", def.name), 4.0));
+        run.banner = Some((format!("{} approaches! Arena Sealed!", def.name), 4.0));
         sounds.write(GlueSound("gsCharacterSelectionEnterWorld"));
+        commands.spawn((
+            BossArena {
+                center: hpos,
+                radius: 36.0,
+                left: 45.0,
+            },
+            super::RunEntity,
+        ));
     }
 
     // Half way between bosses, a closing ring of the moment's weakest.
@@ -360,12 +397,31 @@ pub(super) fn spawn_enemies(
     if spawner.timer > 0.0 {
         return;
     }
-    spawner.timer = 0.12;
-    let alive = enemies.iter().filter(|e| !e.dead).count();
+    let tempo = current_wave_tempo(elapsed);
+    let mut spawn_mult = mult;
+    let mut interval = 0.12;
     let mut target = data::target_alive(elapsed);
+    match tempo {
+        WaveTempo::SwarmSurge => {
+            interval = 0.06;
+            target = (target as f32 * 1.30) as usize;
+            spawn_mult.0 *= 0.45;
+            spawn_mult.1 *= 0.85;
+            spawn_mult.2 *= 1.25;
+        }
+        WaveTempo::BruteVanguard => {
+            interval = 0.22;
+            spawn_mult.0 *= 2.80;
+            spawn_mult.1 *= 1.40;
+            spawn_mult.2 *= 0.80;
+        }
+        WaveTempo::Standard => {}
+    }
+    spawner.timer = interval;
     if run.affixes.horde_stampede {
         target = (target as f32 * 1.25).round() as usize;
     }
+    let alive = enemies.iter().filter(|e| !e.dead).count();
     if alive >= target {
         return;
     }
@@ -380,7 +436,7 @@ pub(super) fn spawn_enemies(
         } else {
             None
         };
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, mult, champion);
+        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, spawn_mult, champion);
     }
 }
 
@@ -493,6 +549,13 @@ pub(super) fn move_enemies(
         let is_casting = e.cast_t > 0.0;
 
         if e.boss && !e.dead && !hero_down {
+            if !e.enraged && e.hp <= e.max_hp * 0.40 {
+                e.enraged = true;
+                e.speed *= 1.35;
+                e.damage *= 1.25;
+                run.banner = Some((format!("ENRAGE: {} summons reinforcements!", e.def.name), 3.5));
+                fx.impact(ent, 8676);
+            }
             if is_casting {
                 e.cast_t = (e.cast_t - dt).max(0.0);
                 if e.cast_t <= 0.0 {
@@ -869,6 +932,36 @@ pub(super) fn tick_molten_fire(
                     run.killer_name = Some("Molten Lava Patch".to_string());
                 }
             }
+        }
+    }
+}
+
+/// Enforces the arena boundaries during boss encounters.
+pub(super) fn tick_boss_arena(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut arenas: Query<(Entity, &mut BossArena)>,
+    mut hero: Query<&mut Transform, With<Hero>>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    let Ok(mut htf) = hero.single_mut() else {
+        return;
+    };
+    for (arena_e, mut arena) in &mut arenas {
+        arena.left -= dt;
+        if arena.left <= 0.0 {
+            commands.entity(arena_e).despawn();
+            continue;
+        }
+        let delta = flat(htf.translation - arena.center);
+        let dist = delta.length();
+        if dist > arena.radius {
+            let clamped = arena.center + delta.normalize_or_zero() * arena.radius;
+            htf.translation.x = clamped.x;
+            htf.translation.z = clamped.z;
         }
     }
 }

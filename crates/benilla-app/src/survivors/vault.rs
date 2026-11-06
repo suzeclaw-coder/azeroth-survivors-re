@@ -110,6 +110,7 @@ mod tests {
             stats: HashMap::new(),
             display_id: 1,
             icon_spell: 100,
+            set: None,
         }
     }
 

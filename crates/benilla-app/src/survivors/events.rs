@@ -17,6 +17,8 @@ pub struct WorldEventState {
     pub portal_spawned: bool,
     pub blood_moon_triggered: bool,
     pub blood_moon_t: f32,
+    pub bounty_1_spawned: bool,
+    pub bounty_2_spawned: bool,
 }
 
 /// A moving goblin supply wagon tagged for interception.
@@ -27,6 +29,17 @@ pub struct Caravan {
     pub waypoints: Vec<Vec3>,
     pub route_index: usize,
     pub hit_timer: f32,
+}
+
+/// A high-value roaming bounty elite with a countdown timer.
+#[derive(Component)]
+pub struct WantedBounty {
+    pub name: &'static str,
+    pub time_left: f32,
+    pub reward_gold: u64,
+    pub hp: f32,
+    #[allow(dead_code)]
+    pub max_hp: f32,
 }
 
 /// A stationary Scourge portal pulsing necrotic rifts and summoning elites.
@@ -72,16 +85,22 @@ pub(super) fn tick_world_events(
     mut rig: ResMut<super::hero::CamRig>,
     mut fx: Fx,
     mut sounds: MessageWriter<crate::sound::GlueSound>,
-    mut account: ResMut<super::save::Account>,
-    mut ach_state: ResMut<super::achievements::AchievementState>,
+    (mut account, mut ach_state): (
+        ResMut<super::save::Account>,
+        ResMut<super::achievements::AchievementState>,
+    ),
     hero: Query<(Entity, &Transform), With<Hero>>,
     mut caravans: Query<
         (Entity, &mut Transform, &mut Caravan),
-        (Without<Hero>, Without<NecroticPortal>),
+        (Without<Hero>, Without<NecroticPortal>, Without<WantedBounty>),
     >,
     mut portals: Query<
         (Entity, &Transform, &mut NecroticPortal),
-        (Without<Hero>, Without<Caravan>),
+        (Without<Hero>, Without<Caravan>, Without<WantedBounty>),
+    >,
+    mut bounties: Query<
+        (Entity, &mut Transform, &mut WantedBounty),
+        (Without<Hero>, Without<Caravan>, Without<NecroticPortal>),
     >,
     ground_areas: Query<
         &Transform,
@@ -90,6 +109,7 @@ pub(super) fn tick_world_events(
             Without<Hero>,
             Without<Caravan>,
             Without<NecroticPortal>,
+            Without<WantedBounty>,
         ),
     >,
 ) {
@@ -106,6 +126,42 @@ pub(super) fn tick_world_events(
     // -------------------------------------------------------------------------
     // 1. EVENT SCHEDULE TRIGGERS
     // -------------------------------------------------------------------------
+
+    // 02:00 (120s) — Bounty 1: Foreman Thistleneedle
+    if run.elapsed >= 120.0 && !state.bounty_1_spawned {
+        state.bounty_1_spawned = true;
+        sounds.write(crate::sound::GlueSound("igPVPUpdate"));
+        run.banner = Some((
+            "WANTED: Slay Foreman Thistleneedle in 60s for +150 Gold & Chest!".to_string(),
+            5.0,
+        ));
+        let offset = Vec3::new(22.0, 0.0, -22.0);
+        let bounty_pos = ground(&world, hero_pos + offset, hero_pos.y);
+        let serial = run.guid();
+        let bounty_e = units::spawn_unit(
+            &mut commands,
+            &units::UnitSpec {
+                serial,
+                display: 1157, // Defias Foreman
+                scale: 1.4,
+                level: 25,
+                faction: units::FACTION_MONSTER,
+                bytes0: 1 << 8,
+                weapons: &[],
+                sheath: 0,
+            },
+            bounty_pos,
+            0.0,
+        );
+        commands.entity(bounty_e).insert(WantedBounty {
+            name: "Foreman Thistleneedle",
+            time_left: 60.0,
+            reward_gold: 150,
+            hp: 2400.0,
+            max_hp: 2400.0,
+        });
+        fx.cast(bounty_e, 20594, &[], Some(bounty_pos));
+    }
 
     // 03:30 (210s) — Goblin Supply Caravan
     if run.elapsed >= 210.0 && !state.caravan_spawned {
@@ -158,6 +214,42 @@ pub(super) fn tick_world_events(
         });
         // Initial green dark rift visual (spell 30513)
         fx.cast(portal_e, 30513, &[], Some(portal_pos));
+    }
+
+    // 08:30 (510s) — Bounty 2: Old Murk-Eye
+    if run.elapsed >= 510.0 && !state.bounty_2_spawned {
+        state.bounty_2_spawned = true;
+        sounds.write(crate::sound::GlueSound("igPVPUpdate"));
+        run.banner = Some((
+            "WANTED: Slay Old Murk-Eye in 60s for +250 Gold & Chest!".to_string(),
+            5.0,
+        ));
+        let offset = Vec3::new(-24.0, 0.0, 24.0);
+        let bounty_pos = ground(&world, hero_pos + offset, hero_pos.y);
+        let serial = run.guid();
+        let bounty_e = units::spawn_unit(
+            &mut commands,
+            &units::UnitSpec {
+                serial,
+                display: 1024, // Murloc
+                scale: 1.5,
+                level: 45,
+                faction: units::FACTION_MONSTER,
+                bytes0: 1 << 8,
+                weapons: &[],
+                sheath: 0,
+            },
+            bounty_pos,
+            0.0,
+        );
+        commands.entity(bounty_e).insert(WantedBounty {
+            name: "Old Murk-Eye",
+            time_left: 60.0,
+            reward_gold: 250,
+            hp: 4800.0,
+            max_hp: 4800.0,
+        });
+        fx.cast(bounty_e, 20594, &[], Some(bounty_pos));
     }
 
     // 12:00 (720s) — Blood Moon Eclipse
@@ -354,6 +446,67 @@ pub(super) fn tick_world_events(
             &mut ach_state,
             &mut sounds,
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. TICK WANTED BOUNTIES
+    // -------------------------------------------------------------------------
+    let mut claimed_bounties = Vec::new();
+    let mut expired_bounties = Vec::new();
+    for (b_e, mut tf, mut bounty) in &mut bounties {
+        bounty.time_left -= dt;
+        if bounty.time_left <= 0.0 {
+            expired_bounties.push((b_e, bounty.name));
+            continue;
+        }
+
+        // Slight wander movement
+        let wander = Vec3::new((run.elapsed * 0.7).cos() * 4.0 * dt, 0.0, (run.elapsed * 0.7).sin() * 4.0 * dt);
+        tf.translation += wander;
+        tf.translation = ground(&world, tf.translation, tf.translation.y);
+
+        let b_pos = tf.translation;
+        let hero_dist = flat(hero_pos - b_pos).length();
+
+        let mut dps = 0.0;
+        if hero_dist <= 7.0 + stats.area * 2.0 {
+            dps += (200.0 + run.level as f32 * 40.0) * stats.might;
+        }
+        if run.iframe_t > 0.0 && hero_dist <= 3.5 {
+            dps += 500.0 * stats.might;
+        }
+        for area_tf in &ground_areas {
+            if flat(area_tf.translation - b_pos).length() <= 6.0 {
+                dps += 250.0 * stats.might;
+            }
+        }
+
+        if dps > 0.0 {
+            bounty.hp -= dps * dt;
+            if bounty.hp <= 0.0 {
+                claimed_bounties.push((b_e, b_pos, bounty.name, bounty.reward_gold));
+            }
+        }
+    }
+
+    for (b_e, pos, name, gold) in claimed_bounties {
+        commands.entity(b_e).despawn();
+        super::chests::spawn_chest(&mut commands, pos, true, 2);
+        run.gold += gold;
+        sounds.write(crate::sound::GlueSound("gsCharacterSelectionEnterWorld"));
+        fx.impact(hero_e, 20484);
+        run.banner = Some((
+            format!("BOUNTY CLAIMED: {} defeated! +{} Gold & Epic Chest!", name, gold),
+            4.5,
+        ));
+    }
+
+    for (b_e, name) in expired_bounties {
+        commands.entity(b_e).despawn();
+        run.banner = Some((
+            format!("The bounty {} escaped into the wild!", name),
+            3.0,
+        ));
     }
 }
 
