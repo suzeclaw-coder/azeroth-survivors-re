@@ -2383,10 +2383,9 @@ pub(super) fn refresh_hud(
         Query<&mut Text, With<OverTitle>>,
         Query<&mut Text, With<OverStats>>,
         Query<&mut Text, With<XpText>>,
-        Query<&mut Text, With<GoldText>>,
+        Query<(&mut Text, Option<&GoldText>, Option<&VaultText>)>,
     )>,
     mut xp_fill: Query<&mut Node, With<XpFill>>,
-    mut vault_text: Query<&mut Text, (With<VaultText>, Without<GoldText>, Without<TimerText>)>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
     mut sweeps: ResMut<Assets<SweepUiMaterial>>,
     mut last_version: Local<Option<u32>>,
@@ -2417,21 +2416,23 @@ pub(super) fn refresh_hud(
     if let Ok(mut t) = texts.p2().single_mut() {
         **t = format!("Kills {kills}");
     }
-    if let Ok(mut t) = texts.p7().single_mut() {
-        let gold_str = format!("Gold: {}", run.gold);
-        if **t != gold_str {
-            **t = gold_str;
+    for (mut t, gold, vault) in &mut texts.p7() {
+        if gold.is_some() {
+            let gold_str = format!("Gold: {}", run.gold);
+            if **t != gold_str {
+                **t = gold_str;
+            }
         }
-    }
-    if let Ok(mut t) = vault_text.single_mut() {
-        let det_str = if run.determination_stacks > 0 {
-            format!(" | Determination: +{}%", run.determination_stacks * 5)
-        } else {
-            String::new()
-        };
-        let vault_str = format!("Vault: {}/{}{}", run.vault.vaulted.len(), run.vault.capacity, det_str);
-        if **t != vault_str {
-            **t = vault_str;
+        if vault.is_some() {
+            let det_str = if run.determination_stacks > 0 {
+                format!(" | Determination: +{}%", run.determination_stacks * 5)
+            } else {
+                String::new()
+            };
+            let vault_str = format!("Vault: {}/{}{}", run.vault.vaulted.len(), run.vault.capacity, det_str);
+            if **t != vault_str {
+                **t = vault_str;
+            }
         }
     }
     let banner = if let Some(rem) = run.hearth_channel {
