@@ -1760,8 +1760,8 @@ pub(crate) fn boss_abilities_for(name: &str) -> &'static [BossAbilityDef] {
 pub(crate) const VICTORY_SECS: f32 = 900.0;
 /// A boss every two and a quarter minutes, the last of six at 13:30, a fight before the bell.
 pub(crate) const BOSS_EVERY_SECS: f32 = 135.0;
-/// Experience per gem: every level of the curve comes at the run's pace.
-pub(crate) const XP_RATE: f32 = 2.0;
+/// Experience per gem: calibrated so combat action stays uninterrupted and rewarding.
+pub(crate) const XP_RATE: f32 = 1.0;
 
 /// How far through the run, 0 at the start and 1 at [`VICTORY_SECS`].
 pub(crate) fn progress(elapsed: f32) -> f32 {
@@ -1798,15 +1798,20 @@ pub(crate) fn damage_scale(elapsed: f32) -> f32 {
     1.0 + progress(elapsed) * 0.9
 }
 
-/// The experience to go from `level` to the next: Vampire Survivors' curve, cheap early.
+/// The experience to go from `level` to the next: tuned for satisfying action pacing (~30-60s between drafts).
 pub(crate) fn xp_to_next(level: u32) -> f32 {
     let l = level as f32;
-    if level < 20 {
-        5.0 + (l - 1.0) * 10.0
-    } else if level < 40 {
-        195.0 + (l - 20.0) * 13.0
+    if level < 10 {
+        // Levels 1-9: 25 base + 15 per level (L1: 25, L2: 40, L3: 55, L4: 70, L5: 85...)
+        25.0 + (l - 1.0) * 15.0
+    } else if level < 25 {
+        // Levels 10-24: 160 base + 25 per level
+        160.0 + (l - 10.0) * 25.0
+    } else if level < 50 {
+        // Levels 25-49: 535 base + 35 per level
+        535.0 + (l - 25.0) * 35.0
     } else {
-        455.0 + (l - 40.0) * 16.0
+        1410.0 + (l - 50.0) * 50.0
     }
 }
 
