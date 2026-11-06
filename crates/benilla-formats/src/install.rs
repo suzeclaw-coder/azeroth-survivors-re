@@ -102,6 +102,7 @@ fn candidates_from(
     // 2. The project folder, dev builds only.
     if let Some(root) = project {
         out.push(root.join("WoW/Data"));
+        out.push(root.join("wow-data/Data"));
     }
 
     // 3. Beside the binary; a failed `current_exe` adds nothing.
