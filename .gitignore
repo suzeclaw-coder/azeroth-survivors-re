@@ -27,9 +27,10 @@
 # is the only thing in the tree that may write it.
 /benilla-config
 
-# The account a scripted run from this checkout logs in as (scripts/probe-identity.sh and the
-# client's account guard read it): WOW_USER=, WOW_PASS=, WOW_CHAR=, one per line. A credential.
+# Local credentials and private machine deployment docs
 /.probe-identity
+/GithubTailScale.md
+*.local.md
 
 # Profiling output: `--features bevy/trace_chrome` drops a multi-GB flame chart in the cwd, which
 # otherwise leaves the checkout "dirty".

@@ -1,0 +1,84 @@
+name: Build and Deploy to VM via Tailscale
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    # Uses GitHub's free ARM64 runner for public repos, matching Oracle Ampere A1 (aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: tools
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev brotli
+
+      - name: Setup WebAssembly toolchain
+        run: scripts/web-setup.sh
+
+      - name: Build WebGPU Client (WASM)
+        run: scripts/web-build.sh
+
+      - name: Build Host Server (wenilla-host)
+        run: cargo build --release -p wenilla-host
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          tags: tag:ci
+
+      - name: Deploy to Oracle VM via Tailscale
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+          # 1. Prepare staging directory on VM
+          ssh -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" "rm -rf /opt/azeroth-survivors/staging && mkdir -p /opt/azeroth-survivors/staging/dist"
+
+          # 2. Upload binary and web dist assets
+          scp -i ~/.ssh/id_ed25519 target/release/wenilla-host "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/wenilla-host"
+          scp -i ~/.ssh/id_ed25519 -r web/dist/* "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/dist/"
+
+          # 3. Atomically replace files & restart service
+          ssh -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" 'bash -se' << 'EOF'
+            chmod +x /opt/azeroth-survivors/staging/wenilla-host
+            mv /opt/azeroth-survivors/staging/wenilla-host /opt/azeroth-survivors/bin/wenilla-host
+            cp -r /opt/azeroth-survivors/staging/dist/* /opt/azeroth-survivors/dist/
+            rm -rf /opt/azeroth-survivors/staging
+            sudo systemctl restart azeroth-survivors.service
+            sudo systemctl status azeroth-survivors.service --no-pager
+            echo "==> Deployment completed! Game is live on your private Tailscale network <=="
+          EOF
