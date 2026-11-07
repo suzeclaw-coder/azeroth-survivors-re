@@ -59,21 +59,22 @@ jobs:
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_USER: ${{ secrets.VM_USER }}
+          VM_PORT: ${{ secrets.VM_PORT || 22022 }}
         run: |
           mkdir -p ~/.ssh
           echo "$VM_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "$VM_PORT" -H "$VM_HOST" >> ~/.ssh/known_hosts
 
           # 1. Prepare staging directory on VM
-          ssh -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" "rm -rf /opt/azeroth-survivors/staging && mkdir -p /opt/azeroth-survivors/staging/dist"
+          ssh -p "$VM_PORT" -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" "rm -rf /opt/azeroth-survivors/staging && mkdir -p /opt/azeroth-survivors/staging/dist"
 
           # 2. Upload binary and web dist assets
-          scp -i ~/.ssh/id_ed25519 target/release/wenilla-host "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/wenilla-host"
-          scp -i ~/.ssh/id_ed25519 -r web/dist/* "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/dist/"
+          scp -P "$VM_PORT" -i ~/.ssh/id_ed25519 target/release/wenilla-host "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/wenilla-host"
+          scp -P "$VM_PORT" -i ~/.ssh/id_ed25519 -r web/dist/* "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/dist/"
 
           # 3. Atomically replace files & restart service
-          ssh -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" 'bash -se' << 'EOF'
+          ssh -p "$VM_PORT" -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" 'bash -se' << 'EOF'
             chmod +x /opt/azeroth-survivors/staging/wenilla-host
             mv /opt/azeroth-survivors/staging/wenilla-host /opt/azeroth-survivors/bin/wenilla-host
             cp -r /opt/azeroth-survivors/staging/dist/* /opt/azeroth-survivors/dist/
