@@ -51,9 +51,14 @@ jobs:
       - name: Connect to Tailscale
         uses: tailscale/github-action@v3
         with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
+
+      - name: Verify Tailscale Connection
+        run: |
+          tailscale status || (echo "::error::Tailscale failed to connect! Check your OAuth permissions (needs Auth Keys write) or TAILSCALE_AUTHKEY." && exit 1)
 
       - name: Deploy to Oracle VM via Tailscale
         env:
