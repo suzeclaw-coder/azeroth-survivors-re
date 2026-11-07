@@ -1457,4 +1457,19 @@ mod tests {
         let mut s5 = IntoSystem::into_system(hub_ui_buttons);
         s5.initialize(&mut world);
     }
+
+    #[test]
+    fn test_hub_schedule_validation() {
+        use bevy::ecs::schedule::Schedule;
+        let mut world = World::new();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((
+            tick_hub,
+            hub_input,
+            hub_ui_buttons,
+            refresh_hub_chrome,
+            refresh_hub_modals,
+        ).chain());
+        schedule.initialize(&mut world).unwrap();
+    }
 }

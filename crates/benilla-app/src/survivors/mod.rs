@@ -167,19 +167,6 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(
                 Update,
                 (
-                    abilities::cast_abilities,
-                    abilities::tick_areas,
-                    abilities::apply_hits,
-                    skillshot::tick_skillshot,
-                    ultimates::tick_ultimates,
-                )
-                    .chain()
-                    .after(WorldStage::Input)
-                    .run_if(in_state(Phase::Hub)),
-            )
-            .add_systems(
-                Update,
-                (
                     hub::tick_hub,
                     hub::hub_input,
                     hub::hub_ui_buttons,
@@ -924,3 +911,64 @@ fn reset_run(
     // The preview hero is respawned for the look still picked.
     selection.version += 1;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_survivors_update_schedule_init() {
+        let mut world = World::new();
+        let mut schedule = bevy::ecs::schedule::Schedule::default();
+        schedule.add_systems(
+            (
+                (
+                    enemies::spawn_enemies,
+                    enemies::move_enemies,
+                    enemies::tick_molten_fire,
+                    enemies::tick_boss_arena,
+                    hazards::tick_hazards,
+                    achievements::check_achievements,
+                    telegraphs::update_telegraphs,
+                    shrines::tick_shrines,
+                    chests::tick_chests,
+                    breakables::break_barrels,
+                    breakables::collect_powerups,
+                ),
+                (
+                    combo::tick_combo,
+                    trinkets::tick_trinkets,
+                    minions::tick_minions,
+                    breakables::vacuum_magnet_gems,
+                    events::tick_world_events,
+                    traits::tick_racial_traits,
+                    abilities::cast_abilities,
+                    skillshot::tick_skillshot,
+                    evolutions::tick_evolutions,
+                    ultimates::tick_ultimates,
+                ),
+                (
+                    abilities::tick_areas,
+                    abilities::apply_hits,
+                    enemies::tick_marks,
+                    enemies::drop_loot,
+                    enemies::collect_gems,
+                    hero::hero_vitals,
+                ),
+            )
+                .chain(),
+        );
+        schedule.add_systems(
+            (
+                hub::tick_hub,
+                hub::hub_input,
+                hub::hub_ui_buttons,
+                hub::refresh_hub_chrome,
+                hub::refresh_hub_modals,
+            )
+                .chain(),
+        );
+        schedule.initialize(&mut world).unwrap();
+    }
+}
+
