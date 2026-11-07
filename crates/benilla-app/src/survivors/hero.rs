@@ -542,10 +542,38 @@ pub(super) fn place_camera(
         } else {
             focus + Vec3::Y * 1.4
         };
-        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.dist;
-        // Never under the ground: a low tilt on a slope would bury the lens.
+
+        // When indoors (e.g. inside the tavern/cottage), clamp distance so the camera
+        // stays inside the room instead of clipping through ceilings/exterior walls.
+        let hero_indoors = world.indoors_at(look);
+        let dist = if hero_indoors {
+            rig.dist.min(2.5)
+        } else {
+            rig.dist
+        };
+
+        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * dist;
+
+        // If the hero is outdoors, ensure the camera does not punch into a WMO building interior:
+        if !hero_indoors && world.indoors_at(eye) {
+            let to_look = look - eye;
+            let len = to_look.length();
+            if len > 0.1 {
+                let dir = to_look / len;
+                // Step forward towards hero until eye is safely outdoors
+                for step in 1..10 {
+                    let candidate = eye + dir * (len * (step as f32 / 10.0));
+                    if !world.indoors_at(candidate) {
+                        eye = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Never under the ground or submerged in grass blades:
         if let Some(h) = world.terrain_height_under(eye) {
-            eye.y = eye.y.max(h + 0.6);
+            eye.y = eye.y.max(h + 1.1);
         }
         (eye, look)
     };
