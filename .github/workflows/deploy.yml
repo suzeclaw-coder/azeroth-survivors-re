@@ -39,6 +39,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev brotli
 
+      - name: Validate Survivor Asset Paths
+        run: |
+          if grep -rn 'asset_server\.load("fonts/' crates/benilla-app/src/survivors/; then
+            echo "::error::Hardcoded font path found without mpq:// protocol!"
+            exit 1
+          fi
+
       - name: Setup WebAssembly toolchain
         run: scripts/web-setup.sh
 
@@ -99,5 +106,22 @@ jobs:
             rm -rf /opt/azeroth-survivors/staging
             sudo systemctl restart azeroth-survivors.service
             sudo systemctl status azeroth-survivors.service --no-pager
-            echo "==> Deployment completed! Game is live on your private Tailscale network <=="
+
+            # 4. Post-deploy Automated Health Check
+            echo "Waiting for service to stabilize..."
+            sleep 2
+            if ! sudo systemctl is-active --quiet azeroth-survivors.service; then
+              echo "::error::azeroth-survivors.service failed to stay active!"
+              sudo journalctl -u azeroth-survivors.service -n 50 --no-pager
+              exit 1
+            fi
+
+            # Check HTTP 200 response
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8095/ || true)
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "::error::Health check failed! HTTP endpoint returned status $HTTP_STATUS"
+              exit 1
+            fi
+
+            echo "==> Health check passed (HTTP 200, systemd active)! Game is live on your private Tailscale network <=="
           EOF

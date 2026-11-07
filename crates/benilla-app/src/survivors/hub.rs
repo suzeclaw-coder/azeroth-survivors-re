@@ -600,7 +600,7 @@ pub(super) fn hub_input(
 
 /// Sets up the complete Tavern Hub UI hierarchy.
 pub(super) fn setup_hub_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font = asset_server.load("fonts/FRIZQT__.TTF");
+    let font = crate::char_select::wow_font(&asset_server);
     let f = &font;
 
     commands
@@ -792,19 +792,21 @@ pub(super) fn refresh_hub_chrome(
     hub_state: Res<HubState>,
     selection: Res<Selection>,
     account: Option<Res<Account>>,
-    mut root_q: Query<(&mut Visibility, &mut Node), With<HubRoot>>,
-    mut top_bar_text_q: Query<&mut Text, With<HubTopBarText>>,
-    mut prompt_q: Query<(&mut Visibility, &mut Node), (With<HubInteractPrompt>, Without<HubRoot>)>,
-    mut prompt_text_q: Query<&mut Text, (With<HubInteractPromptText>, Without<HubTopBarText>)>,
-    mut banner_q: Query<(&mut Visibility, &mut Node, &Children), (With<HubBannerText>, Without<HubRoot>)>,
-    mut text_q: Query<&mut Text, (Without<HubTopBarText>, Without<HubInteractPromptText>)>,
+    mut ui_set: ParamSet<(
+        Query<(&mut Visibility, &mut Node), With<HubRoot>>,
+        Query<&mut Text, With<HubTopBarText>>,
+        Query<(&mut Visibility, &mut Node), With<HubInteractPrompt>>,
+        Query<&mut Text, With<HubInteractPromptText>>,
+        Query<(&mut Visibility, &mut Node, &Children), With<HubBannerText>>,
+        Query<&mut Text>,
+    )>,
     mut last_version: Local<u32>,
     mut last_phase: Local<Phase>,
 ) {
     let p = *phase.get();
     let is_hub = p == Phase::Hub;
 
-    for (mut vis, mut node) in &mut root_q {
+    for (mut vis, mut node) in &mut ui_set.p0() {
         let want_vis = if is_hub { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want_vis {
             *vis = want_vis;
@@ -831,7 +833,7 @@ pub(super) fn refresh_hub_chrome(
     let class_name = selection.class_def().map(|c| c.name).unwrap_or("Adventurer");
 
     // 1. Update Top Bar Text
-    for mut text in &mut top_bar_text_q {
+    for mut text in &mut ui_set.p1() {
         let mut buffs_str = String::new();
         if hub_state.rested_buff {
             buffs_str.push_str("  [Rested: +15% XP]");
@@ -855,7 +857,7 @@ pub(super) fn refresh_hub_chrome(
 
     // 2. Update Proximity Prompt
     let show_prompt = hub_state.focused_npc.is_some() && hub_state.open_dialog.is_none() && !hub_state.show_talents;
-    for (mut vis, mut node) in &mut prompt_q {
+    for (mut vis, mut node) in &mut ui_set.p2() {
         let want_vis = if show_prompt { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want_vis { *vis = want_vis; }
         let want_d = if show_prompt { Display::Flex } else { Display::None };
@@ -863,7 +865,7 @@ pub(super) fn refresh_hub_chrome(
     }
     if show_prompt {
         if let Some(npc) = hub_state.focused_npc {
-            for mut text in &mut prompt_text_q {
+            for mut text in &mut ui_set.p3() {
                 text.0 = format!("[E] Talk to {} {}", npc.name(), npc.title());
             }
         }
@@ -871,17 +873,23 @@ pub(super) fn refresh_hub_chrome(
 
     // 3. Update Banner Text
     let has_banner = hub_state.banner.is_some();
-    for (mut vis, mut node, children) in &mut banner_q {
+    let banner_msg = hub_state.banner.as_ref().map(|(msg, _)| msg.clone());
+    let mut banner_children = Vec::new();
+    for (mut vis, mut node, children) in &mut ui_set.p4() {
         let want_vis = if has_banner { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want_vis { *vis = want_vis; }
         let want_d = if has_banner { Display::Flex } else { Display::None };
         if node.display != want_d { node.display = want_d; }
 
-        if let Some((msg, _)) = &hub_state.banner {
-            for child in children.iter() {
-                if let Ok(mut txt) = text_q.get_mut(child) {
-                    txt.0 = msg.clone();
-                }
+        if banner_msg.is_some() {
+            banner_children.extend(children.iter());
+        }
+    }
+    if let Some(msg) = banner_msg {
+        let mut text_q = ui_set.p5();
+        for child in banner_children {
+            if let Ok(mut txt) = text_q.get_mut(child) {
+                txt.0 = msg.clone();
             }
         }
     }
@@ -896,20 +904,22 @@ pub(super) fn refresh_hub_modals(
     selection: Res<Selection>,
     account: Option<Res<Account>>,
     font: Option<Res<HudFont>>,
-    mut dialog_q: Query<(&mut Visibility, &mut Node), (With<HubDialogRoot>, Without<HubRoot>)>,
+    mut modals_set: ParamSet<(
+        Query<(&mut Visibility, &mut Node), With<HubDialogRoot>>,
+        Query<(&mut Visibility, &mut Node, Entity), With<HubTalentsRoot>>,
+    )>,
     dialog_content_q: Query<Entity, With<HubDialogContent>>,
-    mut talents_q: Query<(&mut Visibility, &mut Node, Entity), (With<HubTalentsRoot>, Without<HubRoot>)>,
     mut last_version: Local<u32>,
     mut last_phase: Local<Phase>,
 ) {
     let p = *phase.get();
     if p != Phase::Hub {
         *last_phase = p;
-        for (mut vis, mut node) in &mut dialog_q {
+        for (mut vis, mut node) in &mut modals_set.p0() {
             *vis = Visibility::Hidden;
             node.display = Display::None;
         }
-        for (mut vis, mut node, _) in &mut talents_q {
+        for (mut vis, mut node, _) in &mut modals_set.p1() {
             *vis = Visibility::Hidden;
             node.display = Display::None;
         }
@@ -928,7 +938,7 @@ pub(super) fn refresh_hub_modals(
 
     // 4. Update Dialog Modal
     let show_dialog = hub_state.open_dialog.is_some() && !hub_state.show_talents;
-    for (mut vis, mut node) in &mut dialog_q {
+    for (mut vis, mut node) in &mut modals_set.p0() {
         let want_vis = if show_dialog { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want_vis { *vis = want_vis; }
         let want_d = if show_dialog { Display::Flex } else { Display::None };
@@ -1090,7 +1100,7 @@ pub(super) fn refresh_hub_modals(
     }
 
     // 5. Update In-Hub Talents Panel
-    for (mut vis, mut node, talents_ent) in &mut talents_q {
+    for (mut vis, mut node, talents_ent) in &mut modals_set.p1() {
         let want_vis = if hub_state.show_talents { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want_vis { *vis = want_vis; }
         let want_d = if hub_state.show_talents { Display::Flex } else { Display::None };
@@ -1430,5 +1440,21 @@ mod tests {
         assert!(SaygeFortune::War.name().contains("Might"));
         assert!(SaygeFortune::Turtle.name().contains("Armor"));
         assert!(SaygeFortune::Wind.name().contains("Speed"));
+    }
+
+    #[test]
+    fn test_hub_systems_param_validation() {
+        use bevy::ecs::system::IntoSystem;
+        let mut world = World::new();
+        let mut s1 = IntoSystem::into_system(refresh_hub_chrome);
+        s1.initialize(&mut world);
+        let mut s2 = IntoSystem::into_system(refresh_hub_modals);
+        s2.initialize(&mut world);
+        let mut s3 = IntoSystem::into_system(tick_hub);
+        s3.initialize(&mut world);
+        let mut s4 = IntoSystem::into_system(hub_input);
+        s4.initialize(&mut world);
+        let mut s5 = IntoSystem::into_system(hub_ui_buttons);
+        s5.initialize(&mut world);
     }
 }
