@@ -63,10 +63,6 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Verify Tailscale Connection
-        run: |
-          tailscale status || (echo "::error::Tailscale failed to connect! Check your OAuth permissions (needs Auth Keys write) or TAILSCALE_AUTHKEY." && exit 1)
-
       - name: Deploy to Oracle VM via Tailscale
         env:
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
@@ -110,9 +106,9 @@ jobs:
             # 4. Post-deploy Automated Health Check
             echo "Waiting for service to stabilize..."
             sleep 2
-            if ! sudo systemctl is-active --quiet azeroth-survivors.service; then
+            if ! systemctl is-active --quiet azeroth-survivors.service; then
               echo "::error::azeroth-survivors.service failed to stay active!"
-              sudo journalctl -u azeroth-survivors.service -n 50 --no-pager
+              sudo systemctl status azeroth-survivors.service --no-pager
               exit 1
             fi
 
