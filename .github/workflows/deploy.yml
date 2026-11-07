@@ -63,20 +63,32 @@ jobs:
           VM_USER: ${{ secrets.VM_USER }}
           VM_PORT: ${{ secrets.VM_PORT || 22022 }}
         run: |
+          set -e
           mkdir -p ~/.ssh
           echo "$VM_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "$VM_PORT" -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+          SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -i ~/.ssh/id_ed25519"
+
+          # Determine accessible SSH port (try configured port, fallback to 22)
+          TARGET_PORT="$VM_PORT"
+          echo "Testing SSH connection to $VM_HOST on port $TARGET_PORT..."
+          if ! ssh $SSH_OPTS -p "$TARGET_PORT" "$VM_USER@$VM_HOST" "echo SSH_OK" 2>/dev/null; then
+            echo "Port $TARGET_PORT unreachable, falling back to port 22..."
+            TARGET_PORT="22"
+            ssh $SSH_OPTS -p "$TARGET_PORT" "$VM_USER@$VM_HOST" "echo SSH_OK"
+          fi
+          echo "Using port $TARGET_PORT for deployment."
 
           # 1. Prepare staging directory on VM
-          ssh -p "$VM_PORT" -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" "rm -rf /opt/azeroth-survivors/staging && mkdir -p /opt/azeroth-survivors/staging/dist"
+          ssh $SSH_OPTS -p "$TARGET_PORT" "$VM_USER@$VM_HOST" "rm -rf /opt/azeroth-survivors/staging && mkdir -p /opt/azeroth-survivors/staging/dist"
 
           # 2. Upload binary and web dist assets
-          scp -P "$VM_PORT" -i ~/.ssh/id_ed25519 target/release/wenilla-host "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/wenilla-host"
-          scp -P "$VM_PORT" -i ~/.ssh/id_ed25519 -r web/dist/* "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/dist/"
+          scp $SSH_OPTS -P "$TARGET_PORT" target/release/wenilla-host "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/wenilla-host"
+          scp $SSH_OPTS -P "$TARGET_PORT" -r web/dist/* "$VM_USER@$VM_HOST:/opt/azeroth-survivors/staging/dist/"
 
           # 3. Atomically replace files & restart service
-          ssh -p "$VM_PORT" -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" 'bash -se' << 'EOF'
+          ssh $SSH_OPTS -p "$TARGET_PORT" "$VM_USER@$VM_HOST" 'bash -se' << 'EOF'
             chmod +x /opt/azeroth-survivors/staging/wenilla-host
             mv /opt/azeroth-survivors/staging/wenilla-host /opt/azeroth-survivors/bin/wenilla-host
             cp -r /opt/azeroth-survivors/staging/dist/* /opt/azeroth-survivors/dist/
