@@ -100,8 +100,9 @@ impl StatType {
 
 /// Equipment slots following World of Warcraft conventions.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum EquipSlot {
+    #[default]
     Head,
     Shoulders,
     Chest,
@@ -189,7 +190,7 @@ impl ItemQuality {
 }
 
 /// A persistent or dropped gear piece.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct GearItem {
     pub id: u32,
     pub name: String,
@@ -201,6 +202,10 @@ pub struct GearItem {
     pub icon_spell: u32,
     #[serde(default)]
     pub set: Option<GearSet>,
+    #[serde(default)]
+    pub upgrades: u8,
+    #[serde(default)]
+    pub rerolled_stat: Option<StatType>,
 }
 
 impl GearItem {
@@ -254,6 +259,85 @@ impl GearItem {
             ItemQuality::Epic => base * 12,
             ItemQuality::Legendary => base * 30,
         }
+    }
+
+    /// Scrap currency value gained when salvaging this item at Durgan's Quartermaster.
+    pub fn scrap_salvage_value(&self) -> u64 {
+        let ilvl_scale = (self.item_level as u64 / 10).max(1);
+        let base = match self.quality {
+            ItemQuality::Poor => 1,
+            ItemQuality::Common => 5,
+            ItemQuality::Uncommon => 15,
+            ItemQuality::Rare => 40,
+            ItemQuality::Epic => 100,
+            ItemQuality::Legendary => 250,
+        };
+        base * ilvl_scale
+    }
+
+    /// Scrap cost required to perform the next upgrade rank (capped at 3).
+    pub fn upgrade_cost(&self) -> Option<u64> {
+        if self.upgrades >= 3 {
+            return None;
+        }
+        let quality_mult = match self.quality {
+            ItemQuality::Poor | ItemQuality::Common => 1,
+            ItemQuality::Uncommon => 2,
+            ItemQuality::Rare => 3,
+            ItemQuality::Epic => 5,
+            ItemQuality::Legendary => 8,
+        };
+        let ilvl_factor = (self.item_level as u64 / 10).max(1);
+        Some(50 * (self.upgrades as u64 + 1) * quality_mult * ilvl_factor)
+    }
+
+    /// Upgrades the item by +1 rank (up to 3 max), boosting item level by +2 and stats by +10%.
+    pub fn upgrade(&mut self) -> Result<u8, &'static str> {
+        if self.upgrades >= 3 {
+            return Err("Item is already at maximum upgrade rank (3/3)");
+        }
+        self.upgrades += 1;
+        self.item_level += 2;
+        for val in self.stats.values_mut() {
+            *val = (*val * 1.10).round().max(*val + 1.0);
+        }
+        Ok(self.upgrades)
+    }
+
+    /// Gold cost required to reroll a secondary stat line.
+    pub fn reroll_cost(&self) -> u64 {
+        let ilvl_factor = (self.item_level as u64 / 10).max(1);
+        75 * ilvl_factor
+    }
+
+    /// Rerolls a designated stat into a new random stat line.
+    /// Locks subsequent rerolls to the same stat line.
+    pub fn reroll_stat(&mut self, target: StatType, rng: &mut Rng) -> Result<(StatType, f32), &'static str> {
+        if !self.stats.contains_key(&target) {
+            return Err("Target stat is not on this item");
+        }
+        if let Some(locked) = self.rerolled_stat {
+            if locked != target {
+                return Err("Can only reroll the previously modified stat line");
+            }
+        }
+        let old_val = self.stats.remove(&target).unwrap();
+        // Pick an available stat that isn't already present
+        let mut candidates: Vec<StatType> = StatType::ALL
+            .iter()
+            .copied()
+            .filter(|&s| s != target && !self.stats.contains_key(&s))
+            .collect();
+        if candidates.is_empty() {
+            candidates.push(target);
+        }
+        let new_stat = candidates[rng.index(candidates.len())];
+        // Value retains 90%..110% of the previous roll
+        let variance = 0.90 + rng.f32() * 0.20;
+        let new_val = (old_val * variance).round().max(1.0);
+        self.stats.insert(new_stat, new_val);
+        self.rerolled_stat = Some(new_stat);
+        Ok((new_stat, new_val))
     }
 }
 
@@ -347,6 +431,8 @@ pub fn generate_gear(rng: &mut Rng, ilvl: u32, quality_bias: f32) -> GearItem {
         display_id,
         icon_spell,
         set,
+        upgrades: 0,
+        rerolled_stat: None,
     }
 }
 
@@ -417,6 +503,8 @@ mod tests {
             display_id: 1,
             icon_spell: 1,
             set: Some(GearSet::ValorPlate),
+            upgrades: 0,
+            rerolled_stat: None,
         };
         let item2 = GearItem {
             id: 2,
@@ -428,6 +516,8 @@ mod tests {
             display_id: 2,
             icon_spell: 2,
             set: Some(GearSet::ValorPlate),
+            upgrades: 0,
+            rerolled_stat: None,
         };
 
         // 2-piece Valor should grant +0.20 armor
@@ -445,6 +535,8 @@ mod tests {
             display_id: 3,
             icon_spell: 3,
             set: Some(GearSet::ValorPlate),
+            upgrades: 0,
+            rerolled_stat: None,
         };
         let item4 = GearItem {
             id: 4,
@@ -456,6 +548,8 @@ mod tests {
             display_id: 4,
             icon_spell: 4,
             set: Some(GearSet::ValorPlate),
+            upgrades: 0,
+            rerolled_stat: None,
         };
 
         let mut stats4 = Stats {
@@ -502,6 +596,8 @@ mod tests {
             display_id: 1234,
             icon_spell: 28273,
             set: None,
+            upgrades: 0,
+            rerolled_stat: None,
         };
 
         // For Warrior (class 1)
@@ -523,8 +619,63 @@ mod tests {
             display_id: 100,
             icon_spell: 28275,
             set: None,
+            upgrades: 0,
+            rerolled_stat: None,
         };
         // 20 * 5 * 12 = 1200
         assert_eq!(item.salvage_value(), 1200);
+        // Epic scrap: 100 * (20 / 10) = 200 scrap
+        assert_eq!(item.scrap_salvage_value(), 200);
+    }
+
+    #[test]
+    fn test_item_upgrades_and_rerolls() {
+        let mut stats = HashMap::new();
+        stats.insert(StatType::Stamina, 20.0);
+        stats.insert(StatType::Strength, 10.0);
+
+        let mut item = GearItem {
+            id: 101,
+            name: "Vanguard Helm".into(),
+            slot: EquipSlot::Head,
+            quality: ItemQuality::Rare,
+            item_level: 30,
+            stats,
+            display_id: 50,
+            icon_spell: 28271,
+            set: None,
+            upgrades: 0,
+            rerolled_stat: None,
+        };
+
+        assert_eq!(item.upgrades, 0);
+        assert_eq!(item.item_level, 30);
+        assert!(item.upgrade_cost().is_some());
+
+        // First upgrade
+        assert!(item.upgrade().is_ok());
+        assert_eq!(item.upgrades, 1);
+        assert_eq!(item.item_level, 32);
+        // +10% on stamina: 20 * 1.1 = 22
+        assert_eq!(*item.stats.get(&StatType::Stamina).unwrap(), 22.0);
+
+        // Second & third upgrades
+        assert!(item.upgrade().is_ok());
+        assert!(item.upgrade().is_ok());
+        assert_eq!(item.upgrades, 3);
+        assert!(item.upgrade().is_err()); // capped at 3
+        assert_eq!(item.upgrade_cost(), None);
+
+        // Stat reroll
+        let mut rng = Rng::new(12345);
+        let res = item.reroll_stat(StatType::Strength, &mut rng);
+        assert!(res.is_ok());
+        let (new_stat, _new_val) = res.unwrap();
+        assert_ne!(new_stat, StatType::Strength);
+        assert_eq!(item.rerolled_stat, Some(new_stat));
+
+        // Attempting to reroll Stamina should fail because reroll is locked to `new_stat`
+        let invalid_reroll = item.reroll_stat(StatType::Stamina, &mut rng);
+        assert!(invalid_reroll.is_err());
     }
 }

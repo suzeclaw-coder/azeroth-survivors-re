@@ -10,7 +10,9 @@
 | Playing | **Space** | jump (or unleash Class Ultimate when meter reaches 100%) |
 | Playing | **Left Shift** | dash forward (12 yd surge, 0.25s i-frame, 3s cd) |
 | Playing | **F** (from level 5) | your class's movement spell: Blink, Charge… aim at the cursor |
-| Playing | **C** | unlock / lock the camera |
+| Playing | **V** | unlock / lock the camera |
+| Any / Hub | **C** / **B** | open Armory, Character Sheet & Extraction Vault |
+| Hub | **F / E** | talk to focused Town Hub NPC |
 | Any | **G** | toggle the picture polish (`?grade=0` starts it off) |
 | Playing | **mouse wheel** | zoom, from over the shoulder out to 70 yd |
 | Playing | **drag** (camera unlocked) | swing and tilt the camera |
@@ -47,6 +49,7 @@
 | Level up | **Left Bumper (LB) / Start** | Skip draft (+50 XP) |
 | Menu / Paused | **Start** / **A** | Confirm / Enter World / Resume |
 
-The camera follows the hero, locked top-down by default (laptop-friendly). **C** unlocks it so a
-mouse drag swings and tilts it; **C** again snaps it back. In the menu it slowly orbits the
+The camera follows the hero, locked top-down by default (laptop-friendly). **V** unlocks it so a
+mouse drag swings and tilts it; **V** again snaps it back. In the Town Hub, a 3rd-person eye-level
+camera is active by default. In the menu it slowly orbits the
 preview hero. Your race, gender, class and zone are remembered across reloads.

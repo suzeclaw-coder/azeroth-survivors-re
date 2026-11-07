@@ -298,6 +298,7 @@ pub(super) struct Selection {
     /// loading screen rises until Enter World.
     pub stage: usize,
     pub difficulty: data::Difficulty,
+    pub keystone_level: u32,
     pub affixes: data::ChallengeAffixes,
     pub is_hardcore: bool,
     /// Bumped on every change, so the menu rebuilds once.
@@ -315,6 +316,10 @@ impl Selection {
 
     pub fn stage_def(&self) -> &'static data::MapDef {
         &data::MAPS[self.stage.min(data::MAPS.len() - 1)]
+    }
+
+    pub fn keystone(&self) -> u32 {
+        self.keystone_level.clamp(1, 25)
     }
 }
 
@@ -806,6 +811,11 @@ impl Default for Rng {
 }
 
 impl Rng {
+    #[allow(dead_code)]
+    pub fn new(seed: u64) -> Self {
+        Self(seed | 1)
+    }
+
     pub fn next_u64(&mut self) -> u64 {
         let mut x = self.0;
         x ^= x >> 12;

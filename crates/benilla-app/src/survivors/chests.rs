@@ -132,7 +132,7 @@ fn apply_upgrade_step(run: &mut Run, rng: &mut Rng) {
 
 /// Ticks active chests: sparkles while unopened, detects hero proximity to open,
 /// rewards cards/gold/fanfare, and despawns after 0.5s.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn tick_chests(
     mut commands: Commands,
     time: Res<Time>,
@@ -143,6 +143,8 @@ pub(super) fn tick_chests(
     mut rig: ResMut<super::hero::CamRig>,
     mut fx: Fx,
     mut sounds: MessageWriter<crate::sound::GlueSound>,
+    account: Option<Res<super::save::Account>>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -176,7 +178,9 @@ pub(super) fn tick_chests(
         };
 
         let dist = flat(chest_tf.translation - hero_tf.translation).length();
-        if dist <= 2.5 {
+        let auto_loot = account.as_deref().map(|a| a.auto_loot_chests).unwrap_or(true);
+        let interact_pressed = keys.as_ref().map(|k| k.just_pressed(KeyCode::KeyF) || k.just_pressed(KeyCode::KeyE)).unwrap_or(false);
+        if dist <= 2.5 && (auto_loot || interact_pressed) {
             chest.opened = true;
             chest.bob_t = 0.0;
 

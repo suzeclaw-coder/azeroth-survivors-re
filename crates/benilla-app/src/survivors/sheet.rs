@@ -619,12 +619,13 @@ pub(super) fn refresh_character_sheet(
                 // Menu / Hub Mode: Account Armory Stash
                 let count = account.as_deref().map(|a| a.armory.len()).unwrap_or(0);
                 let gold = account.as_deref().map(|a| a.gold).unwrap_or(0);
-                let armory_hdr = format!("ACCOUNT ARMORY ({} ITEMS | {} GOLD)", count, gold);
-                container.spawn(sheet_txt(f, &armory_hdr, 12.5, GOLD));
+                let scrap = account.as_deref().map(|a| a.scrap).unwrap_or(0);
+                let armory_hdr = format!("ACCOUNT ARMORY ({} ITEMS | {} GOLD | {} SCRAP)", count, gold, scrap);
+                container.spawn(sheet_txt(f, &armory_hdr, 12.0, GOLD));
                 container.spawn(sheet_txt(
                     f,
-                    "Permanent gear collection extracted across all runs. Equip or salvage.",
-                    10.0,
+                    "Permanent gear collection extracted across all runs. Equip or salvage for Scrap.",
+                    9.5,
                     DIM,
                 ));
 
@@ -640,6 +641,13 @@ pub(super) fn refresh_character_sheet(
                         // Display up to 10 items
                         for (idx, item) in acc.armory.iter().enumerate().take(10) {
                             let val = item.salvage_value();
+                            let scrap_val = item.scrap_salvage_value();
+                            let upg_suffix = if item.upgrades > 0 {
+                                format!(" [{}+]", item.upgrades)
+                            } else {
+                                String::new()
+                            };
+                            let item_title = format!("{}{}", item.name, upg_suffix);
                             container.spawn(Node {
                                 flex_direction: FlexDirection::Row,
                                 justify_content: JustifyContent::SpaceBetween,
@@ -659,7 +667,7 @@ pub(super) fn refresh_character_sheet(
                                     ..default()
                                 })
                                 .with_children(|info| {
-                                    info.spawn(sheet_txt(f, &item.name, 10.5, item.quality.color()));
+                                    info.spawn(sheet_txt(f, &item_title, 10.5, item.quality.color()));
                                     info.spawn(sheet_txt(
                                         f,
                                         &format!("[{}] iLvl {} | {}", item.slot.name(), item.item_level, format_stats_short(item)),
@@ -676,11 +684,11 @@ pub(super) fn refresh_character_sheet(
                                 .with_children(|actions| {
                                     actions.spawn(sheet_btn(SheetAction::EquipArmory(idx), 46.0, 18.0))
                                         .with_children(|b| {
-                                            b.spawn(sheet_txt(f, "Equip", 9.5, GOLD));
+                                             b.spawn(sheet_txt(f, "Equip", 9.5, GOLD));
                                         });
-                                    actions.spawn(sheet_btn(SheetAction::SalvageArmory(idx), 60.0, 18.0))
+                                    actions.spawn(sheet_btn(SheetAction::SalvageArmory(idx), 72.0, 18.0))
                                         .with_children(|b| {
-                                            b.spawn(sheet_txt(f, &format!("+{}g", val), 9.0, GOLD));
+                                             b.spawn(sheet_txt(f, &format!("+{}g/{}s", val, scrap_val), 8.5, GOLD));
                                         });
                                 });
                             });
@@ -772,8 +780,8 @@ pub(super) fn sheet_buttons(
                     }
                     SheetAction::SalvageArmory(idx) => {
                         if let Some(acc) = account.as_deref_mut() {
-                            if let Some(val) = acc.salvage_item(idx) {
-                                run.banner = Some((format!("Salvaged armory gear for +{} Gold!", val), 2.5));
+                            if let Some((gold, scrap)) = acc.salvage_item_for_scrap(idx) {
+                                run.banner = Some((format!("Salvaged armory gear for +{} Gold & +{} Scrap!", gold, scrap), 2.5));
                                 run.version += 1;
                                 sounds.write(GlueSound("LOOTWINDOWCOINSOUND"));
                             }
@@ -828,6 +836,8 @@ mod tests {
             display_id: 1,
             icon_spell: 100,
             set: None,
+            upgrades: 0,
+            rerolled_stat: None,
         };
         let formatted = format_stats_short(&item);
         assert!(formatted.contains("+24 Sta"));

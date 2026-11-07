@@ -35,7 +35,11 @@ const ORBIT_RATE: f32 = 0.008;
 const PITCH_MIN: f32 = 0.18;
 const PITCH_MAX: f32 = 1.45;
 /// The locked view's tilt.
-const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
+pub(super) const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
+/// Town Hub 3rd-person eye-level RPG view tilt (~18° above horizon).
+pub(super) const HUB_PITCH: f32 = 18.0 * std::f32::consts::PI / 180.0;
+/// Town Hub default camera distance from hero (yards).
+pub(super) const HUB_DIST: f32 = 6.0;
 /// Wheel zoom range, yards from the hero's shoulders.
 const ZOOM_MIN: f32 = 1.5;
 const ZOOM_MAX: f32 = 70.0;
@@ -94,12 +98,17 @@ pub(super) fn arena(map: &data::MapDef) -> Vec3 {
 /// continent worldports, which raises the loading screen until the new ground is in.
 pub(super) fn follow_map(
     selection: Res<Selection>,
+    phase: Res<State<Phase>>,
     current: Option<ResMut<benilla_world::world_map::CurrentMap>>,
 ) {
     let Some(mut current) = current else {
         return;
     };
-    let want = selection.stage_def().map;
+    let want = if *phase.get() == Phase::Hub {
+        super::hub::HUB_MAP_ID
+    } else {
+        selection.stage_def().map
+    };
     if current.0 != want {
         current.0 = want;
     }
@@ -464,10 +473,28 @@ pub(super) fn place_camera(
     world: WorldPoint,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
+    mut last_phase: Local<Phase>,
 ) {
-    // `C` unlocks the camera to swing and tilt; locking it again snaps back to the top-down view,
-    // so world-relative WASD lines up with the screen again.
-    if keys.just_pressed(KeyCode::KeyC) {
+    let p = *phase.get();
+    let is_hub = p == Phase::Hub;
+
+    // Detect phase transitions for camera presets
+    if *last_phase == Phase::Hub && p == Phase::Playing {
+        rig.mode = CamMode::Fixed;
+        rig.pitch = FIXED_PITCH;
+        rig.dist = 18.0;
+        rig.yaw = 0.0;
+    } else if *last_phase != Phase::Hub && is_hub {
+        rig.mode = CamMode::Orbit;
+        rig.pitch = HUB_PITCH;
+        rig.dist = HUB_DIST;
+        rig.yaw = 0.0;
+    }
+    *last_phase = p;
+
+    // In play, `V` unlocks the camera to swing and tilt; locking it again snaps back to top-down.
+    // In the Town Hub, orbit mode is active by default. `C` is reserved for Armory / Character Sheet.
+    if keys.just_pressed(KeyCode::KeyV) && !is_hub {
         rig.mode = match rig.mode {
             CamMode::Fixed => CamMode::Orbit,
             CamMode::Orbit => {
@@ -481,18 +508,19 @@ pub(super) fn place_camera(
     let focus = hero.single().map_or(player.pos, |t| t.translation);
     // Multiplicative, so a notch moves as far by eye close in as far out; all the way down to an
     // over-the-shoulder view.
+    let (min_zoom, max_zoom) = if is_hub { (2.5, 20.0) } else { (ZOOM_MIN, ZOOM_MAX) };
     for w in wheel.read() {
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,
             MouseScrollUnit::Pixel => w.y * 0.02,
         };
-        rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(ZOOM_MIN, ZOOM_MAX);
+        rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(min_zoom, max_zoom);
     }
     let dt = time.delta_secs();
     if rig.shake_t > 0.0 {
         rig.shake_t = (rig.shake_t - dt).max(0.0);
     }
-    let (mut eye, mut look) = if *phase.get() == Phase::Menu {
+    let (mut eye, mut look) = if p == Phase::Menu {
         rig.orbit += dt * 0.2;
         let d = 7.0;
         (
@@ -500,15 +528,20 @@ pub(super) fn place_camera(
             focus + Vec3::Y * 1.1,
         )
     } else {
-        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
-        if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
+        // Unlocked or in Hub: mouse drag swings and tilts camera around the hero, as in WoW.
+        if (rig.mode == CamMode::Orbit || is_hub)
+            && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
         {
             rig.yaw -= motion.delta.x * ORBIT_RATE;
             rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
         }
         let (sy, cy) = rig.yaw.sin_cos();
         let (sp, cp) = rig.pitch.sin_cos();
-        let look = focus + Vec3::Y * 1.4;
+        let look = if is_hub {
+            focus + Vec3::Y * 1.6
+        } else {
+            focus + Vec3::Y * 1.4
+        };
         let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.dist;
         // Never under the ground: a low tilt on a slope would bury the lens.
         if let Some(h) = world.terrain_height_under(eye) {

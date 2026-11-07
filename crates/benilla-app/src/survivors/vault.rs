@@ -167,6 +167,8 @@ mod tests {
             display_id: 1,
             icon_spell: 100,
             set: None,
+            upgrades: 0,
+            rerolled_stat: None,
         }
     }
 

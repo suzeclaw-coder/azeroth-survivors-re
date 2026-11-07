@@ -26,6 +26,10 @@ pub const GREED_BONUS_PER_RANK: f32 = 0.10;
 pub const CHANNELER_BONUS_PER_RANK: f32 = 0.10;
 pub const FORTUNE_BONUS_PER_RANK: f32 = 0.05;
 
+fn default_true() -> bool {
+    true
+}
+
 /// A fallen hardcore legend recorded in the Graveyard.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub(crate) struct FallenHero {
@@ -55,6 +59,8 @@ pub(crate) struct AccountSave {
     #[serde(default)]
     pub gold: u64,
     #[serde(default)]
+    pub scrap: u64,
+    #[serde(default)]
     pub upgrades: AccountUpgrades,
     #[serde(default)]
     pub high_scores: HashMap<String, ZoneRecord>,
@@ -80,6 +86,10 @@ pub(crate) struct AccountSave {
     pub unlocked_titles: Vec<super::titles::TitleId>,
     #[serde(default)]
     pub active_title: Option<super::titles::TitleId>,
+    #[serde(default = "default_true")]
+    pub range_rings_enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_loot_chests: bool,
 }
 
 /// Meta-progression upgrades purchased with gold, capped at 5 ranks each.
@@ -365,6 +375,44 @@ impl AccountSave {
         let _ = self.save();
     }
 
+    /// Checks if the account can afford the given gold cost.
+    pub(crate) fn can_afford_gold(&self, amount: u64) -> bool {
+        self.gold >= amount
+    }
+
+    /// Spends gold if affordable, saves to disk, and returns true.
+    pub(crate) fn spend_gold(&mut self, amount: u64) -> bool {
+        if self.gold >= amount {
+            self.gold -= amount;
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Checks if the account can afford the given scrap cost.
+    pub(crate) fn can_afford_scrap(&self, amount: u64) -> bool {
+        self.scrap >= amount
+    }
+
+    /// Adds scrap to the account and persists to disk.
+    pub(crate) fn add_scrap(&mut self, amount: u64) {
+        self.scrap = self.scrap.saturating_add(amount);
+        let _ = self.save();
+    }
+
+    /// Spends scrap if affordable, saves to disk, and returns true.
+    pub(crate) fn spend_scrap(&mut self, amount: u64) -> bool {
+        if self.scrap >= amount {
+            self.scrap -= amount;
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the current rank of an upgrade kind.
     pub(crate) fn upgrade_rank(&self, kind: UpgradeKind) -> u8 {
         self.upgrades.get_rank(kind)
@@ -497,7 +545,7 @@ impl AccountSave {
         }
     }
 
-    /// Salvages an item from the armory for gold, unlocking its transmog appearance.
+    /// Salvages an item from the armory for both Gold and Scrap, unlocking its transmog appearance.
     pub(crate) fn salvage_item(&mut self, armory_idx: usize) -> Option<u64> {
         if armory_idx < self.armory.len() {
             let item = self.armory.remove(armory_idx);
@@ -505,12 +553,91 @@ impl AccountSave {
                 self.transmog_unlocked.push(item.display_id);
             }
             let val = item.salvage_value();
+            let scrap = item.scrap_salvage_value();
             self.gold = self.gold.saturating_add(val);
+            self.scrap = self.scrap.saturating_add(scrap);
             let _ = self.save();
             Some(val)
         } else {
             None
         }
+    }
+
+    /// Salvages an item from the armory for both Gold and Scrap, returning `(gold, scrap)`.
+    pub(crate) fn salvage_item_for_scrap(&mut self, armory_idx: usize) -> Option<(u64, u64)> {
+        if armory_idx < self.armory.len() {
+            let item = self.armory.remove(armory_idx);
+            if !self.transmog_unlocked.contains(&item.display_id) {
+                self.transmog_unlocked.push(item.display_id);
+            }
+            let gold = item.salvage_value();
+            let scrap = item.scrap_salvage_value();
+            self.gold = self.gold.saturating_add(gold);
+            self.scrap = self.scrap.saturating_add(scrap);
+            let _ = self.save();
+            Some((gold, scrap))
+        } else {
+            None
+        }
+    }
+
+    /// Upgrades an item in the armory or equipped gear by +1 rank, deducting the required Scrap.
+    pub(crate) fn upgrade_gear_item(&mut self, item_id: u32) -> Result<u8, &'static str> {
+        // Look in armory first
+        if let Some(item) = self.armory.iter_mut().find(|i| i.id == item_id) {
+            let cost = item.upgrade_cost().ok_or("Item already at maximum upgrades (3/3)")?;
+            if self.scrap < cost {
+                return Err("Not enough Scrap to upgrade this item");
+            }
+            self.scrap -= cost;
+            let rank = item.upgrade()?;
+            let _ = self.save();
+            return Ok(rank);
+        }
+        // Look in equipped gear
+        if let Some(item) = self.equipped.values_mut().find(|i| i.id == item_id) {
+            let cost = item.upgrade_cost().ok_or("Item already at maximum upgrades (3/3)")?;
+            if self.scrap < cost {
+                return Err("Not enough Scrap to upgrade this item");
+            }
+            self.scrap -= cost;
+            let rank = item.upgrade()?;
+            let _ = self.save();
+            return Ok(rank);
+        }
+        Err("Item not found in armory or equipped slots")
+    }
+
+    /// Rerolls a secondary stat line on an item in the armory or equipped gear for Gold.
+    pub(crate) fn reroll_gear_stat(
+        &mut self,
+        item_id: u32,
+        target_stat: super::gear::StatType,
+        rng: &mut super::Rng,
+    ) -> Result<(super::gear::StatType, f32), &'static str> {
+        // Look in armory first
+        if let Some(item) = self.armory.iter_mut().find(|i| i.id == item_id) {
+            let cost = item.reroll_cost();
+            if self.gold < cost {
+                return Err("Not enough Gold to reroll this stat");
+            }
+            let res = item.reroll_stat(target_stat, rng)?;
+            self.gold -= cost;
+            let _ = self.save();
+            return Ok(res);
+        }
+        // Look in equipped gear
+        if let Some(item) = self.equipped.values_mut().find(|i| i.id == item_id) {
+            let cost = item.reroll_cost();
+            if self.gold < cost {
+                return Err("Not enough Gold to reroll this stat");
+            }
+            let res = item.reroll_stat(target_stat, rng)?;
+            self.gold -= cost;
+            let _ = self.save();
+            return Ok(res);
+        }
+        Err("Item not found in armory or equipped slots")
     }
 
     /// Returns the active title definition, if one is set.

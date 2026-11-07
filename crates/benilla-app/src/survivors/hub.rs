@@ -23,14 +23,17 @@ use super::units::{self, flat, wow_to_bevy, yaw_toward, UnitSpec};
 use super::{Owned, Phase, Rng, Run, RunEntity, Selection};
 use crate::sound::GlueSound;
 
-/// WoW world coordinates for the Lion's Pride Inn plaza in Goldshire (Elwynn Forest, Map 0).
-pub const HUB_CENTER_WOW: [f32; 3] = [-9464.0, 62.0, 56.0];
-
-/// Maximum leash radius in yards from the tavern plaza center.
-pub const HUB_LEASH: f32 = 40.0;
+/// Map ID containing the 3D town hub (Map 1 = Kalimdor for GM Island).
+pub const HUB_MAP_ID: u32 = 1;
 
 /// Map name that contains the 3D tavern hub.
-pub const HUB_MAP_NAME: &'static str = "Elwynn Forest";
+pub const HUB_MAP_NAME: &'static str = "GM Island";
+
+/// WoW world coordinates for GM Island Camp and Cottage (Kalimdor, Map 1).
+pub const HUB_CENTER_WOW: [f32; 3] = [16248.7, 16313.8, 20.85];
+
+/// Maximum leash radius in yards from the GM Island camp center.
+pub const HUB_LEASH: f32 = 65.0;
 
 /// Center of the town hub in Bevy engine coordinates.
 pub fn hub_center() -> Vec3 {
@@ -46,37 +49,45 @@ pub enum HubNpcKind {
     RunMaster,
     TargetDummy,
     EnchanterIlsa,
+    Banker,
+    Transmogrifier,
 }
 
 impl HubNpcKind {
-    pub const ALL: [HubNpcKind; 6] = [
+    pub const ALL: [HubNpcKind; 8] = [
         HubNpcKind::Innkeeper,
         HubNpcKind::QuartermasterDurgan,
         HubNpcKind::Sayge,
         HubNpcKind::RunMaster,
         HubNpcKind::TargetDummy,
         HubNpcKind::EnchanterIlsa,
+        HubNpcKind::Banker,
+        HubNpcKind::Transmogrifier,
     ];
 
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Innkeeper => "Innkeeper Allison",
+            Self::Innkeeper => "Tarn Oakhoof",
             Self::QuartermasterDurgan => "Quartermaster Durgan Ironbelly",
-            Self::Sayge => "Sayge <Darkmoon Faire>",
-            Self::RunMaster => "Run Master Thalor",
+            Self::Sayge => "Sayge",
+            Self::RunMaster => "Gizzik Bonkwhistle",
             Self::TargetDummy => "Target Dummy",
             Self::EnchanterIlsa => "Ilsa Runeweaver",
+            Self::Banker => "Bixi Vaultbolt",
+            Self::Transmogrifier => "Esmeralda Glimmerstitch",
         }
     }
 
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Innkeeper => "<Tavern & Talents>",
+            Self::Innkeeper => "<Innkeeper>",
             Self::QuartermasterDurgan => "<Armory & Blacksmith>",
-            Self::Sayge => "<Glyphs & Divination>",
-            Self::RunMaster => "<Expeditions>",
-            Self::TargetDummy => "<Damage Test>",
+            Self::Sayge => "<Darkmoon Faire>",
+            Self::RunMaster => "<Run Master>",
+            Self::TargetDummy => "<Damage Test Dummy>",
             Self::EnchanterIlsa => "<Mystic Enchanter>",
+            Self::Banker => "<Banker & Vaultkeeper>",
+            Self::Transmogrifier => "<Transmogrifier>",
         }
     }
 
@@ -88,30 +99,50 @@ impl HubNpcKind {
             Self::RunMaster => 4363,
             Self::TargetDummy => 2054,
             Self::EnchanterIlsa => 10045,
+            Self::Banker => 5174,
+            Self::Transmogrifier => 1214,
         }
     }
 
     /// Offset from `hub_center()` in yards.
     pub fn offset(&self) -> Vec3 {
         match self {
-            Self::Innkeeper => Vec3::new(-5.0, 0.0, -3.5),
-            Self::QuartermasterDurgan => Vec3::new(6.5, 0.0, -3.0),
-            Self::Sayge => Vec3::new(-7.0, 0.0, 4.0),
-            Self::RunMaster => Vec3::new(0.0, 0.0, -7.5),
-            Self::TargetDummy => Vec3::new(7.0, 0.0, 5.0),
-            Self::EnchanterIlsa => Vec3::new(4.0, 0.0, 3.5),
+            Self::Innkeeper => Vec3::new(-4.0, 0.0, 5.0),
+            Self::QuartermasterDurgan => Vec3::new(8.0, 0.0, 3.0),
+            Self::Sayge => Vec3::new(-8.0, 0.0, -6.0),
+            Self::RunMaster => Vec3::new(6.0, 0.0, -8.0),
+            Self::TargetDummy => Vec3::new(12.0, 0.0, -4.0),
+            Self::EnchanterIlsa => Vec3::new(4.0, 0.0, 7.0),
+            Self::Banker => Vec3::new(-6.0, 0.0, 2.0),
+            Self::Transmogrifier => Vec3::new(-2.0, 0.0, 8.0),
         }
     }
 
     /// Thematic classic WoW gossip dialogue greeting.
     pub fn greeting(&self) -> &'static str {
         match self {
-            Self::Innkeeper => "Welcome, traveler! Rest your weary bones by the hearth. Enjoy a pint of stout and bolster your heroic talents before venturing out into the wild.",
+            Self::Innkeeper => "Make yourself at home, friend. Tell old Tarn how you like things, and the Inn will keep it that way. Rest by the hearth, or bolster your heroic talents before venturing out into the wild.",
             Self::QuartermasterDurgan => "Hail! Keep your blade sharp and your armor sturdy. Inspect your armory stash, salvage unwanted spoils for coin, or purchase a mysterious equipment cache.",
             Self::Sayge => "The mists of destiny part for those who dare look. Seek a Darkmoon divination fortune, or rewrite the threads of fate for your next expedition.",
             Self::RunMaster => "The waygates stand ready! Select your destination continent, tune the challenge difficulty, and embark on your next survivor trial.",
             Self::TargetDummy => "Reinforced straw target dummy designed for combat trials. Unleash your abilities and check the AZS Spell Meter ([M]) to gauge your damage output.",
             Self::EnchanterIlsa => "Arcane currents ebb and flow through Azeroth. Allow me to weave potent magical enchantments into your active battle gear.",
+            Self::Banker => "Welcome to the Extraction Vault! Safely store gear brought home from your runs with the Hearthstone, or prepare equipment for future expeditions.",
+            Self::Transmogrifier => "Every piece you find adds its look to your collection! Choose a slot, inspect your wardrobe, and customize your battle attire.",
+        }
+    }
+
+    /// Sound effect kit played when opening interaction dialog with this NPC.
+    pub fn greeting_sound(&self) -> &'static str {
+        match self {
+            Self::Innkeeper => "igQuestListOpen",
+            Self::QuartermasterDurgan => "igCharacterInfoOpen",
+            Self::Sayge => "SPELL_NATURE_MAGIC_IMMUNITY",
+            Self::RunMaster => "igQuestListOpen",
+            Self::TargetDummy => "igCreatureAggroSelect",
+            Self::EnchanterIlsa => "SPELL_HOLY_HOLYPROTECTION",
+            Self::Banker => "igBackPackOpen",
+            Self::Transmogrifier => "igCharacterInfoTab",
         }
     }
 }
@@ -145,12 +176,16 @@ pub struct HubState {
     pub focused_npc: Option<HubNpcKind>,
     /// Currently open NPC dialogue window (None if closed).
     pub open_dialog: Option<HubNpcKind>,
+    /// Active tab in Quartermaster Durgan's shop (0: Armor, 1: Weapons, 2: Upgrades, 3: Salvage).
+    pub qm_tab: u8,
     /// Whether the in-hub talent upgrade panel is currently open.
     pub show_talents: bool,
     /// Has the player rested at the Innkeeper for the +15% XP bonus?
     pub rested_buff: bool,
     /// Active Sayge divination fortune for the next expedition.
     pub sayge_fortune: Option<SaygeFortune>,
+    /// Active Sayge tarot card glyph blessing for the next expedition.
+    pub sayge_glyph: Option<super::glyphs::GlyphKind>,
     /// Extra rerolls earned for the next expedition.
     pub extra_rerolls: u32,
     /// Temporary banner text and duration timer.
@@ -217,22 +252,31 @@ pub enum HubAction {
     // Innkeeper Actions
     InnkeeperTalents,
     InnkeeperRest,
+    InnkeeperToggleRangeRings,
+    InnkeeperToggleAutoLoot,
     InnkeeperCampfire,
 
     // Quartermaster Actions
     QuartermasterArmory,
     QuartermasterSalvageJunk,
     QuartermasterBuyCache,
+    QuartermasterTab(u8),
+    QuartermasterBuySlot(gear::EquipSlot, u64),
+    QuartermasterUpgradeItem(u32),
+    QuartermasterRerollItem(u32, gear::StatType),
 
     // Sayge Actions
     SaygeFortuneWar,
     SaygeFortuneTurtle,
     SaygeFortuneWind,
+    SaygeDrawTarotCard,
     SaygeRewrittenFate,
 
     // Run Master Actions
     RunMasterCycleMap(isize),
+    RunMasterSetDifficulty(data::Difficulty),
     RunMasterCycleDifficulty,
+    RunMasterAdjustKeystone(i32),
     RunMasterCycleAffixes,
     RunMasterToggleHardcore,
     RunMasterStartExpedition,
@@ -244,6 +288,12 @@ pub enum HubAction {
 
     // Target Dummy Actions
     ResetDummyMeter,
+
+    // Banker Actions
+    BankerOpenVault,
+
+    // Transmogrifier Actions
+    TransmogOpenWardrobe,
 
     // In-Hub Talent Purchase
     TalentUpgrade(UpgradeKind),
@@ -297,13 +347,16 @@ fn hub_btn(action: HubAction, width: f32, height: f32) -> impl Bundle {
 /// Called upon entering `Phase::Hub` to populate the town hub with the player hero and NPCs.
 pub(super) fn enter_hub(
     mut commands: Commands,
-    mut selection: ResMut<Selection>,
+    selection: ResMut<Selection>,
     mut run: ResMut<Run>,
     mut player: ResMut<crate::player::Player>,
     mut hub_state: ResMut<HubState>,
+    mut current_map: Option<ResMut<benilla_world::world_map::CurrentMap>>,
+    rig: Option<ResMut<hero::CamRig>>,
     world: benilla_world::world_point::WorldPoint,
     heroes: Query<Entity, With<Hero>>,
     existing_entities: Query<Entity, With<RunEntity>>,
+    mut sounds: MessageWriter<GlueSound>,
 ) {
     // 1. Despawn any existing run entities (monsters, chests, old hub npcs)
     for e in &existing_entities {
@@ -313,25 +366,31 @@ pub(super) fn enter_hub(
         commands.entity(e).despawn();
     }
 
-    // 2. Align world stage to Elwynn Forest (Lion's Pride Inn / Goldshire area on Map 0)
-    let hub_map_idx = data::MAPS
-        .iter()
-        .position(|m| m.name == HUB_MAP_NAME)
-        .unwrap_or(0);
-    selection.stage = hub_map_idx;
+    // 2. Set world map to Kalimdor (Map 1) for GM Island Camp
+    if let Some(ref mut cm) = current_map {
+        cm.0 = HUB_MAP_ID;
+    }
 
     let center = hub_center();
     let mut hero_pos = center;
     if let Some(h) = world.terrain_height_under(hero_pos) {
-        hero_pos.y = h;
+        hero_pos.y = hero_pos.y.max(h);
     }
 
-    // 3. Anchor world streaming & camera to the tavern plaza
+    // 3. Anchor world streaming & camera to GM Island Camp
     player.active = true;
     player.detached = false;
     player.settling = false;
     player.world_stale = false;
     player.pos = hero_pos;
+
+    // 4. Set 3D eye-level camera for Town Hub
+    if let Some(mut r) = rig {
+        r.mode = hero::CamMode::Orbit;
+        r.pitch = hero::HUB_PITCH;
+        r.dist = hero::HUB_DIST;
+        r.yaw = 0.0;
+    }
 
     // 4. Resolve character selection
     let class_idx = selection.class.unwrap_or(0);
@@ -375,6 +434,9 @@ pub(super) fn enter_hub(
     hub_state.open_dialog = None;
     hub_state.show_talents = false;
     hub_state.version += 1;
+
+    // 8. Play welcoming town soundscape cue
+    sounds.write(GlueSound("SPELL_HOLY_HOLYPROTECTION"));
 }
 
 /// Spawns the town hub NPCs around the tavern square with grounded terrain heights and inward facing.
@@ -410,7 +472,7 @@ fn spawn_hub_npcs_internal(
     for kind in HubNpcKind::ALL {
         let mut pos = center + kind.offset();
         if let Some(h) = world.terrain_height_under(pos) {
-            pos.y = h;
+            pos.y = pos.y.max(h);
         }
 
         let to_center = flat(center - pos);
@@ -443,6 +505,57 @@ fn spawn_hub_npcs_internal(
         // Target Dummy receives combat hits, DoTs, and FCT
         if is_dummy {
             ent_cmd.insert((
+                TargetDummy,
+                Enemy {
+                    def: &TARGET_DUMMY_DEF,
+                    hp: 1_000_000.0,
+                    max_hp: 1_000_000.0,
+                    speed: 0.0,
+                    damage: 0.0,
+                    radius: 1.2,
+                    xp: 0,
+                    boss: false,
+                    champion: None,
+                    champion_shield: 0.0,
+                    molten_timer: 0.0,
+                    attack_cd: 999999.0,
+                    slow: 0.0,
+                    slow_t: 0.0,
+                    root_t: 0.0,
+                    stun_t: 0.0,
+                    fear_t: 0.0,
+                    weaken: 0.0,
+                    weaken_t: 0.0,
+                    dots: Vec::new(),
+                    dead: false,
+                    ability_cd: 999999.0,
+                    cast_t: 0.0,
+                    current_ability: None,
+                    ability_idx: 0,
+                    enraged: false,
+                },
+            ));
+
+            // Secondary Training Dummy (Cleave / AoE Testing)
+            let cleave_pos = pos + Vec3::new(2.4, 0.0, 0.0);
+            let e2 = units::spawn_unit(
+                commands,
+                &UnitSpec {
+                    serial: 0x9000_0000 | (kind.display_id() as u64 + 1),
+                    display: kind.display_id(),
+                    scale: 1.25,
+                    level: 60,
+                    faction: units::FACTION_MONSTER,
+                    bytes0: 0,
+                    weapons: &[],
+                    sheath: 0,
+                },
+                cleave_pos,
+                yaw,
+            );
+            commands.entity(e2).insert((
+                kind,
+                RunEntity,
                 TargetDummy,
                 Enemy {
                     def: &TARGET_DUMMY_DEF,
@@ -546,8 +659,9 @@ pub(super) fn tick_hub(
 }
 
 /// Keyboard shortcuts in the hub:
-/// - [E]: Talk to focused NPC
-/// - [Esc]: Close open dialog/talents modal or return to campfire
+/// - [F] / [E]: Talk to focused NPC
+/// - [C] / [B]: Open Armory / Character Sheet
+/// - [Esc]: Dismiss dialog, close armory, or return to campfire
 /// - [Enter]: Embark on expedition (if Run Master active)
 pub(super) fn hub_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -563,18 +677,36 @@ pub(super) fn hub_input(
         return;
     }
 
-    // [E] interact with focused NPC
-    if keys.just_pressed(KeyCode::KeyE) && hub_state.open_dialog.is_none() && !hub_state.show_talents {
+    // [F] or [E] interact with focused NPC
+    if (keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE))
+        && hub_state.open_dialog.is_none()
+        && !hub_state.show_talents
+    {
         if let Some(npc) = hub_state.focused_npc {
             hub_state.open_dialog = Some(npc);
             hub_state.version += 1;
-            sounds.write(GlueSound("igQuestListOpen"));
+            sounds.write(GlueSound(npc.greeting_sound()));
+        }
+    }
+
+    // [C] or [B] toggle Armory / Character Sheet
+    if keys.just_pressed(KeyCode::KeyC) || keys.just_pressed(KeyCode::KeyB) {
+        run.vault.is_open = !run.vault.is_open;
+        run.version += 1;
+        if run.vault.is_open {
+            sounds.write(GlueSound("igCharacterInfoOpen"));
+        } else {
+            sounds.write(GlueSound("igCharacterInfoClose"));
         }
     }
 
     // [Esc] modal dismissal or return to campfire
     if keys.just_pressed(KeyCode::Escape) {
-        if hub_state.show_talents {
+        if run.vault.is_open {
+            run.vault.is_open = false;
+            run.version += 1;
+            sounds.write(GlueSound("igCharacterInfoClose"));
+        } else if hub_state.show_talents {
             hub_state.show_talents = false;
             hub_state.version += 1;
             sounds.write(GlueSound("igMainMenuOptionCheckBoxOff"));
@@ -582,7 +714,7 @@ pub(super) fn hub_input(
             hub_state.open_dialog = None;
             hub_state.version += 1;
             sounds.write(GlueSound("igMainMenuOptionCheckBoxOff"));
-        } else if !run.vault.is_open {
+        } else {
             next.set(Phase::Menu);
             sounds.write(GlueSound("igMainMenuOptionCheckBoxOff"));
         }
@@ -643,7 +775,7 @@ pub(super) fn setup_hub_ui(mut commands: Commands, asset_server: Res<AssetServer
             .with_children(|bar| {
                 bar.spawn((
                     HubTopBarText,
-                    hub_txt(f, "LION'S PRIDE TAVERN HUB", 14.0, GOLD),
+                    hub_txt(f, "GM ISLAND CAMP & TAVERN HUB", 14.0, GOLD),
                 ));
 
                 bar.spawn(Node {
@@ -779,7 +911,7 @@ pub(super) fn setup_hub_ui(mut commands: Commands, asset_server: Res<AssetServer
             .with_children(|prompt| {
                 prompt.spawn((
                     HubInteractPromptText,
-                    hub_txt(f, "[E] Talk to NPC", 14.0, GOLD),
+                    hub_txt(f, "[F / E] Talk to NPC", 14.0, GOLD),
                 ));
             });
         });
@@ -830,6 +962,7 @@ pub(super) fn refresh_hub_chrome(
     *last_version = hub_state.version;
 
     let gold = account.as_deref().map(|a| a.gold).unwrap_or(0);
+    let scrap = account.as_deref().map(|a| a.scrap).unwrap_or(0);
     let class_name = selection.class_def().map(|c| c.name).unwrap_or("Adventurer");
 
     // 1. Update Top Bar Text
@@ -850,8 +983,8 @@ pub(super) fn refresh_hub_chrome(
         }
 
         text.0 = format!(
-            "LION'S PRIDE TAVERN HUB  |  {}  |  Gold: {}g{}",
-            class_name, gold, buffs_str
+            "GM ISLAND CAMP & TAVERN HUB  |  {}  |  Gold: {}g  |  Scrap: {}{}",
+            class_name, gold, scrap, buffs_str
         );
     }
 
@@ -866,7 +999,7 @@ pub(super) fn refresh_hub_chrome(
     if show_prompt {
         if let Some(npc) = hub_state.focused_npc {
             for mut text in &mut ui_set.p3() {
-                text.0 = format!("[E] Talk to {} {}", npc.name(), npc.title());
+                text.0 = format!("[F / E] Talk to {} {}", npc.name(), npc.title());
             }
         }
     }
@@ -982,90 +1115,295 @@ pub(super) fn refresh_hub_modals(
             .with_children(|opts| {
                 match npc {
                     HubNpcKind::Innkeeper => {
-                        opts.spawn(hub_btn(HubAction::InnkeeperTalents, 460.0, 28.0))
+                        opts.spawn(hub_btn(HubAction::InnkeeperTalents, 460.0, 26.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "📜 View Talents & Meta-Upgrades", 12.0, GOLD));
+                                b.spawn(hub_txt(f, "📜 View Talents & Meta-Upgrades", 11.5, GOLD));
                             });
                         let rest_lbl = if hub_state.rested_buff {
                             "🍺 Rest by the Hearth (Active: +15% XP Bonus)"
                         } else {
                             "🍺 Rest by the Hearth (+15% XP Bonus for Next Run)"
                         };
-                        opts.spawn(hub_btn(HubAction::InnkeeperRest, 460.0, 28.0))
+                        opts.spawn(hub_btn(HubAction::InnkeeperRest, 460.0, 26.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, rest_lbl, 12.0, if hub_state.rested_buff { GREEN } else { GOLD }));
+                                b.spawn(hub_txt(f, rest_lbl, 11.5, if hub_state.rested_buff { GREEN } else { GOLD }));
                             });
-                        opts.spawn(hub_btn(HubAction::InnkeeperCampfire, 460.0, 28.0))
+                        let rings_on = account.as_deref().map(|a| a.range_rings_enabled).unwrap_or(true);
+                        let rings_lbl = if rings_on {
+                            "🎯 Weapon Range Rings: [x] ENABLED (Ground Decals Active)"
+                        } else {
+                            "🎯 Weapon Range Rings: [ ] Disabled"
+                        };
+                        opts.spawn(hub_btn(HubAction::InnkeeperToggleRangeRings, 460.0, 26.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "🏕️ Return to Campfire / Select Different Hero", 12.0, DIM));
+                                b.spawn(hub_txt(f, rings_lbl, 11.5, if rings_on { GOLD } else { DIM }));
+                            });
+                        let autoloot_on = account.as_deref().map(|a| a.auto_loot_chests).unwrap_or(true);
+                        let autoloot_lbl = if autoloot_on {
+                            "📦 Auto-Loot Boss Chests: [x] ENABLED"
+                        } else {
+                            "📦 Auto-Loot Boss Chests: [ ] Disabled"
+                        };
+                        opts.spawn(hub_btn(HubAction::InnkeeperToggleAutoLoot, 460.0, 26.0))
+                            .with_children(|b| {
+                                b.spawn(hub_txt(f, autoloot_lbl, 11.5, if autoloot_on { GOLD } else { DIM }));
+                            });
+                        opts.spawn(hub_btn(HubAction::InnkeeperCampfire, 460.0, 26.0))
+                            .with_children(|b| {
+                                b.spawn(hub_txt(f, "🏕️ Return to Campfire / Select Different Hero", 11.5, DIM));
                             });
                     }
                     HubNpcKind::QuartermasterDurgan => {
-                        opts.spawn(hub_btn(HubAction::QuartermasterArmory, 460.0, 28.0))
-                            .with_children(|b| {
-                                b.spawn(hub_txt(f, "⚔️ Open Armory & Equipment Stash [C]", 12.0, GOLD));
+                        let gold = account.as_deref().map(|a| a.gold).unwrap_or(0);
+                        let scrap = account.as_deref().map(|a| a.scrap).unwrap_or(0);
+
+                        // 1. Navigation Tabs Header
+                        opts.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            width: Val::Px(460.0),
+                            margin: UiRect::bottom(Val::Px(4.0)),
+                            ..default()
+                        }).with_children(|tabs| {
+                            let t0_color = if hub_state.qm_tab == 0 { GOLD } else { DIM };
+                            let t1_color = if hub_state.qm_tab == 1 { GOLD } else { DIM };
+                            let t2_color = if hub_state.qm_tab == 2 { GOLD } else { DIM };
+                            let t3_color = if hub_state.qm_tab == 3 { GOLD } else { DIM };
+
+                            tabs.spawn(hub_btn(HubAction::QuartermasterTab(0), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "🛡️ Armor", 11.0, t0_color));
                             });
-                        opts.spawn(hub_btn(HubAction::QuartermasterSalvageJunk, 460.0, 28.0))
-                            .with_children(|b| {
-                                b.spawn(hub_txt(f, "💰 Salvage All Common/Poor Gear for Gold", 12.0, GOLD));
+                            tabs.spawn(hub_btn(HubAction::QuartermasterTab(1), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "⚔️ Weapons", 11.0, t1_color));
                             });
-                        opts.spawn(hub_btn(HubAction::QuartermasterBuyCache, 460.0, 28.0))
-                            .with_children(|b| {
-                                b.spawn(hub_txt(f, "🎁 Purchase Mysterious Gear Cache (150 Gold)", 12.0, PURPLE));
+                            tabs.spawn(hub_btn(HubAction::QuartermasterTab(2), 118.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "🔨 Upgrades", 11.0, t2_color));
                             });
+                            tabs.spawn(hub_btn(HubAction::QuartermasterTab(3), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "♻️ Salvage", 11.0, t3_color));
+                            });
+                        });
+
+                        // 2. Tab Content Panels
+                        match hub_state.qm_tab {
+                            0 => {
+                                // Tab 0: Armor Shop
+                                opts.spawn(hub_txt(f, &format!("Available Gold: {}g | Curated Class Armor Pieces", gold), 10.5, GOLD));
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::Head, 100), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "👑 Gladiator's Crown (Head) - 100 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::Shoulders, 100), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🛡️ Vanguard Spaulders (Shoulders) - 100 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::Chest, 120), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🥋 Stormwind Breastplate (Chest) - 120 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::Legs, 100), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "👖 Ironforge Greaves (Legs) - 100 Gold", 10.5, BLUE));
+                                });
+                            }
+                            1 => {
+                                // Tab 1: Weapons & Mystical Trinkets
+                                opts.spawn(hub_txt(f, &format!("Available Gold: {}g | Armaments & Relics", gold), 10.5, GOLD));
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::MainHand, 150), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🗡️ Blade of the Warchief (Main Hand) - 150 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::OffHand, 120), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🛡️ Bulwark of the Ancients (Off-Hand) - 120 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuySlot(gear::EquipSlot::Trinket1, 140), 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🧿 Talisman of Ephemeral Power (Trinket) - 140 Gold", 10.5, BLUE));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterBuyCache, 460.0, 24.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "🎁 Mysterious Equipment Cache (Random Quality) - 150 Gold", 10.5, PURPLE));
+                                });
+                            }
+                            2 => {
+                                // Tab 2: Forge Upgrades & Stat Reforging
+                                opts.spawn(hub_txt(f, &format!("Available Scrap: {} | Upgrade (+10% Stats) or Reforge Stat Lines", scrap), 10.5, GOLD));
+                                if let Some(acc) = account.as_deref() {
+                                    let mut items: Vec<&gear::GearItem> = Vec::new();
+                                    for item in acc.equipped.values() {
+                                        items.push(item);
+                                    }
+                                    for item in acc.armory.iter().take(3) {
+                                        items.push(item);
+                                    }
+
+                                    if items.is_empty() {
+                                        opts.spawn(hub_txt(f, "  (No gear equipped or in Armory to forge. Buy from shop or extract gear!)", 10.0, DIM));
+                                    } else {
+                                        for item in items.iter().take(3) {
+                                            let upg_cost_opt = item.upgrade_cost();
+                                            let upg_str = match upg_cost_opt {
+                                                Some(c) => format!("🔨 Upgrade [{}] (+10% stats, +2 iLvl) [{} Scrap] (Rank {}/3)", item.name, c, item.upgrades),
+                                                None => format!("⭐ [{}] - MAX UPGRADE RANK (3/3)", item.name),
+                                            };
+                                            let can_upg = upg_cost_opt.map(|c| scrap >= c).unwrap_or(false);
+                                            opts.spawn(hub_btn(HubAction::QuartermasterUpgradeItem(item.id), 460.0, 22.0)).with_children(|b| {
+                                                b.spawn(hub_txt(f, &upg_str, 9.5, if can_upg { GREEN } else if upg_cost_opt.is_some() { DIM } else { GOLD }));
+                                            });
+
+                                            // Reforge option for first secondary stat line
+                                            if let Some((&first_stat, _)) = item.stats.iter().next() {
+                                                let cost = item.reroll_cost();
+                                                let reroll_str = format!("🎲 Reforge [{}] {} Line ({} Gold)", item.name, first_stat.name(), cost);
+                                                let can_reroll = gold >= cost;
+                                                opts.spawn(hub_btn(HubAction::QuartermasterRerollItem(item.id, first_stat), 460.0, 20.0)).with_children(|b| {
+                                                    b.spawn(hub_txt(f, &reroll_str, 9.0, if can_reroll { Color::srgb(0.4, 0.8, 1.0) } else { DIM }));
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Tab 3: Scrap Recycling Station
+                                opts.spawn(hub_txt(f, &format!("Current Scrap: {} | Current Gold: {}g", scrap, gold), 11.0, GOLD));
+                                opts.spawn(hub_btn(HubAction::QuartermasterSalvageJunk, 460.0, 28.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "♻️ Salvage All Common/Poor Armory Items (Yields Gold & Scrap)", 11.0, GOLD));
+                                });
+                                opts.spawn(hub_btn(HubAction::QuartermasterArmory, 460.0, 28.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "⚔️ Open Armory to Inspect & Salvage Individual Pieces [C]", 11.0, BLUE));
+                                });
+                            }
+                        }
                     }
                     HubNpcKind::Sayge => {
-                        opts.spawn(hub_btn(HubAction::SaygeFortuneWar, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::SaygeFortuneWar, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "⚔️ Divination: Fortune of War (+12% Might)", 11.5, GOLD));
+                                b.spawn(hub_txt(f, "⚔️ Divination: Fortune of War (+12% Might)", 11.0, GOLD));
                             });
-                        opts.spawn(hub_btn(HubAction::SaygeFortuneTurtle, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::SaygeFortuneTurtle, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "🛡️ Divination: Fortune of the Turtle (+20% Armor)", 11.5, BLUE));
+                                b.spawn(hub_txt(f, "🛡️ Divination: Fortune of the Turtle (+20% Armor)", 11.0, BLUE));
                             });
-                        opts.spawn(hub_btn(HubAction::SaygeFortuneWind, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::SaygeFortuneWind, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "💨 Divination: Fortune of the Wind (+15% Speed)", 11.5, GREEN));
+                                b.spawn(hub_txt(f, "💨 Divination: Fortune of the Wind (+15% Speed)", 11.0, GREEN));
+                            });
+                        let tarot_lbl = if let Some(g) = hub_state.sayge_glyph {
+                            format!("🎴 Darkmoon Tarot: [{}] Active!", g.name())
+                        } else {
+                            "🎴 Draw Darkmoon Tarot Card (Ability Glyph Blessing)".into()
+                        };
+                        opts.spawn(hub_btn(HubAction::SaygeDrawTarotCard, 460.0, 24.0))
+                            .with_children(|b| {
+                                b.spawn(hub_txt(f, &tarot_lbl, 11.0, if hub_state.sayge_glyph.is_some() { PURPLE } else { GOLD }));
                             });
                         let reroll_lbl = format!("🃏 Rewritten Fate: +1 Extra Reroll (100g) [Current: +{}]", hub_state.extra_rerolls);
-                        opts.spawn(hub_btn(HubAction::SaygeRewrittenFate, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::SaygeRewrittenFate, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, &reroll_lbl, 11.5, PURPLE));
+                                b.spawn(hub_txt(f, &reroll_lbl, 11.0, PURPLE));
                             });
                     }
                     HubNpcKind::RunMaster => {
                         let map_def = selection.map_def();
-                        let map_btn_str = format!("🗺️ Expedition Zone: {} (Click to Cycle)", map_def.name);
-                        opts.spawn(hub_btn(HubAction::RunMasterCycleMap(1), 460.0, 26.0))
-                            .with_children(|b| {
-                                b.spawn(hub_txt(f, &map_btn_str, 12.0, GOLD));
-                            });
+                        let keystone = selection.keystone();
 
-                        let diff_str = format!("💀 Difficulty: {} (Click to Cycle)", selection.difficulty.name());
-                        opts.spawn(hub_btn(HubAction::RunMasterCycleDifficulty, 460.0, 26.0))
-                            .with_children(|b| {
-                                b.spawn(hub_txt(f, &diff_str, 12.0, Color::srgb(1.0, 0.5, 0.3)));
-                            });
+                        // 1. Visual Difficulty Tier Plaques Header
+                        opts.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            width: Val::Px(460.0),
+                            margin: UiRect::bottom(Val::Px(4.0)),
+                            ..default()
+                        }).with_children(|tiers| {
+                            let is_norm = selection.difficulty == data::Difficulty::Normal;
+                            let is_hero = selection.difficulty == data::Difficulty::Heroic;
+                            let is_myth = selection.difficulty == data::Difficulty::Mythic;
+                            let is_night = selection.difficulty == data::Difficulty::Nightmare;
 
+                            tiers.spawn(hub_btn(HubAction::RunMasterSetDifficulty(data::Difficulty::Normal), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, if is_norm { "★ Normal" } else { "Normal" }, 10.5, if is_norm { GOLD } else { DIM }));
+                            });
+                            tiers.spawn(hub_btn(HubAction::RunMasterSetDifficulty(data::Difficulty::Heroic), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, if is_hero { "★ Heroic" } else { "Heroic" }, 10.5, if is_hero { BLUE } else { DIM }));
+                            });
+                            tiers.spawn(hub_btn(HubAction::RunMasterSetDifficulty(data::Difficulty::Mythic), 108.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, if is_myth { "★ Mythic" } else { "Mythic" }, 10.5, if is_myth { PURPLE } else { DIM }));
+                            });
+                            tiers.spawn(hub_btn(HubAction::RunMasterSetDifficulty(data::Difficulty::Nightmare), 118.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, if is_night { "★ Nightmare" } else { "Nightmare" }, 10.5, if is_night { Color::srgb(1.0, 0.4, 0.2) } else { DIM }));
+                            });
+                        });
+
+                        // 2. Mythic Keystone Stepper
+                        if matches!(selection.difficulty, data::Difficulty::Mythic | data::Difficulty::Nightmare) {
+                            let hp_pct = 120 + (keystone - 1) * 15;
+                            let dmg_pct = 60 + (keystone - 1) * 10;
+                            let reward_pct = 60 + (keystone - 1) * 20;
+
+                            opts.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                width: Val::Px(460.0),
+                                margin: UiRect::bottom(Val::Px(2.0)),
+                                ..default()
+                            }).with_children(|keystone_row| {
+                                keystone_row.spawn(hub_btn(HubAction::RunMasterAdjustKeystone(-1), 60.0, 22.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "[-1 Level]", 9.5, GOLD));
+                                });
+                                keystone_row.spawn(hub_txt(
+                                    f,
+                                    &format!("🔑 Keystone +{}  (+{}% HP | +{}% Dmg | +{}% Loot)", keystone, hp_pct, dmg_pct, reward_pct),
+                                    10.0,
+                                    PURPLE,
+                                ));
+                                keystone_row.spawn(hub_btn(HubAction::RunMasterAdjustKeystone(1), 60.0, 22.0)).with_children(|b| {
+                                    b.spawn(hub_txt(f, "[+1 Level]", 9.5, GOLD));
+                                });
+                            });
+                        }
+
+                        // 3. Zone Map Navigator Card
+                        opts.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            width: Val::Px(460.0),
+                            margin: UiRect::bottom(Val::Px(4.0)),
+                            ..default()
+                        }).with_children(|zone_nav| {
+                            zone_nav.spawn(hub_btn(HubAction::RunMasterCycleMap(-1), 75.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "◀ Previous", 10.0, GOLD));
+                            });
+                            zone_nav.spawn(hub_txt(f, &format!("🗺️ {} ({})", map_def.name, map_def.zone), 12.0, GOLD));
+                            zone_nav.spawn(hub_btn(HubAction::RunMasterCycleMap(1), 75.0, 24.0)).with_children(|b| {
+                                b.spawn(hub_txt(f, "Next ▶", 10.0, GOLD));
+                            });
+                        });
+
+                        // 4. Zone High Score Record
+                        let record_str = if let Some(rec) = account.as_deref().and_then(|a| a.high_scores.get(map_def.name)) {
+                            format!("🏆 Personal Record: Survived {:.1}s | Lv {} | Tier: {}", rec.best_survival_secs, rec.highest_level, rec.highest_difficulty)
+                        } else {
+                            "🏆 Personal Record: No expedition records recorded yet".into()
+                        };
+                        opts.spawn(hub_txt(f, &record_str, 9.5, DIM));
+
+                        // 5. Challenge Affixes & Hardcore Mode
                         let affix_str = format!("⚡ Challenge Affixes: {} (Click to Cycle)", selection.affixes.label());
-                        opts.spawn(hub_btn(HubAction::RunMasterCycleAffixes, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::RunMasterCycleAffixes, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, &affix_str, 12.0, BLUE));
+                                b.spawn(hub_txt(f, &affix_str, 10.5, BLUE));
                             });
 
                         let hc_str = if selection.is_hardcore {
-                            "☠️ Hardcore Mode: [x] ENABLED (Mortal Permadeath)"
+                            "☠️ Hardcore Mode: [x] ENABLED (Mortal Permadeath - Graveyard Persisted)"
                         } else {
-                            "🛡️ Hardcore Mode: [ ] Disabled (Softcore)"
+                            "🛡️ Hardcore Mode: [ ] Disabled (Softcore Expedition)"
                         };
-                        opts.spawn(hub_btn(HubAction::RunMasterToggleHardcore, 460.0, 26.0))
+                        opts.spawn(hub_btn(HubAction::RunMasterToggleHardcore, 460.0, 24.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, hc_str, 12.0, if selection.is_hardcore { Color::srgb(1.0, 0.3, 0.3) } else { DIM }));
+                                b.spawn(hub_txt(f, hc_str, 10.5, if selection.is_hardcore { Color::srgb(1.0, 0.3, 0.3) } else { DIM }));
                             });
 
+                        // 6. Embark Button
                         opts.spawn(hub_btn(HubAction::RunMasterStartExpedition, 460.0, 32.0))
                             .with_children(|b| {
-                                b.spawn(hub_txt(f, "🚀 >>> EMBARK ON EXPEDITION <<<", 14.0, GREEN));
+                                b.spawn(hub_txt(f, "🚀 >>> EMBARK ON EXPEDITION <<<", 13.5, GREEN));
                             });
                     }
                     HubNpcKind::EnchanterIlsa => {
@@ -1086,6 +1424,18 @@ pub(super) fn refresh_hub_modals(
                         opts.spawn(hub_btn(HubAction::ResetDummyMeter, 460.0, 28.0))
                             .with_children(|b| {
                                 b.spawn(hub_txt(f, "🔄 Reset AZS Spell Meter & DPS Tally", 12.0, GOLD));
+                            });
+                    }
+                    HubNpcKind::Banker => {
+                        opts.spawn(hub_btn(HubAction::BankerOpenVault, 460.0, 30.0))
+                            .with_children(|b| {
+                                b.spawn(hub_txt(f, "🏦 Open Extraction Vault & Account Stash [C]", 12.0, GOLD));
+                            });
+                    }
+                    HubNpcKind::Transmogrifier => {
+                        opts.spawn(hub_btn(HubAction::TransmogOpenWardrobe, 460.0, 30.0))
+                            .with_children(|b| {
+                                b.spawn(hub_txt(f, "👗 Open Wardrobe & Dressing Room", 12.0, PURPLE));
                             });
                     }
                 }
@@ -1192,6 +1542,7 @@ pub(super) fn hub_ui_buttons(
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
     mut sounds: MessageWriter<GlueSound>,
+    mut range_settings: Option<ResMut<super::hero::RangeRingSettings>>,
 ) {
     for (interaction, action, base, mut bg) in &mut clicks {
         match interaction {
@@ -1235,7 +1586,7 @@ pub(super) fn hub_ui_buttons(
                         if let Some(npc) = hub_state.focused_npc {
                             hub_state.open_dialog = Some(npc);
                             hub_state.version += 1;
-                            sounds.write(GlueSound("igQuestListOpen"));
+                            sounds.write(GlueSound(npc.greeting_sound()));
                         }
                     }
                     HubAction::InnkeeperRest => {
@@ -1244,16 +1595,97 @@ pub(super) fn hub_ui_buttons(
                         hub_state.version += 1;
                         sounds.write(GlueSound("LEVELUPSOUND"));
                     }
+                    HubAction::InnkeeperToggleRangeRings => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            acc.range_rings_enabled = !acc.range_rings_enabled;
+                            let new_val = acc.range_rings_enabled;
+                            if let Some(ref mut rs) = range_settings {
+                                rs.enabled = new_val;
+                            }
+                            let _ = acc.save();
+                            hub_state.banner = Some((
+                                format!("Weapon Range Rings: {}", if new_val { "ENABLED" } else { "DISABLED" }),
+                                2.5,
+                            ));
+                            hub_state.version += 1;
+                            sounds.write(GlueSound(if new_val { "igMainMenuOptionCheckBoxOn" } else { "igMainMenuOptionCheckBoxOff" }));
+                        }
+                    }
+                    HubAction::InnkeeperToggleAutoLoot => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            acc.auto_loot_chests = !acc.auto_loot_chests;
+                            let new_val = acc.auto_loot_chests;
+                            let _ = acc.save();
+                            hub_state.banner = Some((
+                                format!("Auto-Loot Boss Chests: {}", if new_val { "ENABLED" } else { "DISABLED" }),
+                                2.5,
+                            ));
+                            hub_state.version += 1;
+                            sounds.write(GlueSound(if new_val { "igMainMenuOptionCheckBoxOn" } else { "igMainMenuOptionCheckBoxOff" }));
+                        }
+                    }
+                    HubAction::QuartermasterTab(tab) => {
+                        hub_state.qm_tab = tab;
+                        hub_state.version += 1;
+                        sounds.write(GlueSound("igCharacterInfoTab"));
+                    }
+                    HubAction::QuartermasterBuySlot(slot, cost) => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            if acc.gold >= cost {
+                                acc.gold -= cost;
+                                let mut item = gear::generate_gear(&mut rng, 25, 0.45);
+                                item.slot = slot;
+                                let item_name = item.name.clone();
+                                acc.armory.push(item);
+                                let _ = acc.save();
+                                hub_state.banner = Some((format!("Acquired [{}]! Stashed in your Armory.", item_name), 3.5));
+                                sounds.write(GlueSound("igBackPackOpen"));
+                            } else {
+                                hub_state.banner = Some((format!("Not enough gold! Cost is {}g.", cost), 2.5));
+                            }
+                            hub_state.version += 1;
+                        }
+                    }
+                    HubAction::QuartermasterUpgradeItem(item_id) => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            match acc.upgrade_gear_item(item_id) {
+                                Ok(new_rank) => {
+                                    hub_state.banner = Some((format!("Forged Upgrade! Item upgraded to Rank [{}/3] (+10% stats, +2 iLvl)!", new_rank), 3.5));
+                                    sounds.write(GlueSound("LEVELUPSOUND"));
+                                }
+                                Err(err) => {
+                                    hub_state.banner = Some((format!("Upgrade Failed: {}", err), 2.5));
+                                }
+                            }
+                            hub_state.version += 1;
+                        }
+                    }
+                    HubAction::QuartermasterRerollItem(item_id, target_stat) => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            match acc.reroll_gear_stat(item_id, target_stat, &mut rng) {
+                                Ok((new_stat, val)) => {
+                                    hub_state.banner = Some((format!("Reforged Stat Line to +{} {}!", val as i32, new_stat.name()), 3.5));
+                                    sounds.write(GlueSound("SPELL_NATURE_MAGIC_IMMUNITY"));
+                                }
+                                Err(err) => {
+                                    hub_state.banner = Some((format!("Reforge Failed: {}", err), 2.5));
+                                }
+                            }
+                            hub_state.version += 1;
+                        }
+                    }
                     HubAction::QuartermasterSalvageJunk => {
                         if let Some(acc) = account.as_deref_mut() {
                             let mut salvaged_count = 0;
                             let mut gold_earned = 0;
+                            let mut scrap_earned = 0;
                             let mut idx = 0;
                             while idx < acc.armory.len() {
                                 if acc.armory[idx].quality <= ItemQuality::Common {
-                                    if let Some(val) = acc.salvage_item(idx) {
+                                    if let Some((g, s)) = acc.salvage_item_for_scrap(idx) {
                                         salvaged_count += 1;
-                                        gold_earned += val;
+                                        gold_earned += g;
+                                        scrap_earned += s;
                                         continue;
                                     }
                                 }
@@ -1261,8 +1693,8 @@ pub(super) fn hub_ui_buttons(
                             }
                             if salvaged_count > 0 {
                                 hub_state.banner = Some((
-                                    format!("Salvaged {} common items for +{} Gold!", salvaged_count, gold_earned),
-                                    3.0,
+                                    format!("Salvaged {} junk items for +{} Gold & +{} Scrap!", salvaged_count, gold_earned, scrap_earned),
+                                    3.5,
                                 ));
                                 sounds.write(GlueSound("LOOTWINDOWCOINSOUND"));
                             } else {
@@ -1321,6 +1753,27 @@ pub(super) fn hub_ui_buttons(
                             hub_state.version += 1;
                         }
                     }
+                    HubAction::SaygeDrawTarotCard => {
+                        if let Some(acc) = account.as_deref_mut() {
+                            if acc.gold >= 50 {
+                                acc.gold -= 50;
+                                let _ = acc.save();
+                                let pool = [
+                                    super::glyphs::GlyphKind::MovingBlizzard,
+                                    super::glyphs::GlyphKind::PiercingShadow,
+                                    super::glyphs::GlyphKind::ConsecrationHeal,
+                                    super::glyphs::GlyphKind::RuptureBurst,
+                                ];
+                                let picked = pool[rng.index(pool.len())];
+                                hub_state.sayge_glyph = Some(picked);
+                                hub_state.banner = Some((format!("The Tarot reveals: [{}]! Active on your next run.", picked.name()), 4.0));
+                                sounds.write(GlueSound("SPELL_NATURE_MAGIC_IMMUNITY"));
+                            } else {
+                                hub_state.banner = Some(("Not enough gold! A Tarot reading costs 50g.".into(), 2.5));
+                            }
+                            hub_state.version += 1;
+                        }
+                    }
                     HubAction::RunMasterCycleMap(delta) => {
                         let total = data::MAPS.len() as isize;
                         let next_idx = ((selection.map as isize + delta).rem_euclid(total)) as usize;
@@ -1329,8 +1782,22 @@ pub(super) fn hub_ui_buttons(
                         hub_state.version += 1;
                         sounds.write(GlueSound("igMainMenuOptionCheckBoxOn"));
                     }
+                    HubAction::RunMasterSetDifficulty(diff) => {
+                        selection.difficulty = diff;
+                        selection.version += 1;
+                        hub_state.version += 1;
+                        sounds.write(GlueSound("igMainMenuOptionCheckBoxOn"));
+                    }
                     HubAction::RunMasterCycleDifficulty => {
                         selection.difficulty = selection.difficulty.next();
+                        selection.version += 1;
+                        hub_state.version += 1;
+                        sounds.write(GlueSound("igMainMenuOptionCheckBoxOn"));
+                    }
+                    HubAction::RunMasterAdjustKeystone(delta) => {
+                        let current = selection.keystone();
+                        let next_level = ((current as i32 + delta).clamp(1, 25)) as u32;
+                        selection.keystone_level = next_level;
                         selection.version += 1;
                         hub_state.version += 1;
                         sounds.write(GlueSound("igMainMenuOptionCheckBoxOn"));
@@ -1374,6 +1841,16 @@ pub(super) fn hub_ui_buttons(
                         hub_state.version += 1;
                         sounds.write(GlueSound("igMainMenuOptionCheckBoxOff"));
                     }
+                    HubAction::BankerOpenVault => {
+                        run.vault.is_open = true;
+                        run.version += 1;
+                        sounds.write(GlueSound("igBackPackOpen"));
+                    }
+                    HubAction::TransmogOpenWardrobe => {
+                        run.vault.is_open = true;
+                        run.version += 1;
+                        sounds.write(GlueSound("igCharacterInfoOpen"));
+                    }
                     HubAction::TalentUpgrade(kind) => {
                         if let Some(acc) = account.as_deref_mut() {
                             if acc.purchase_upgrade(kind) {
@@ -1405,6 +1882,12 @@ fn embark_expedition(
         if let Some(fortune) = hub_state.sayge_fortune {
             run.sayge_fortune = Some(fortune);
         }
+        if let Some(glyph) = hub_state.sayge_glyph {
+            if !run.has_glyph(glyph) {
+                run.glyphs.push(glyph);
+            }
+            glyph.apply_to_run(run, 1);
+        }
         if hub_state.extra_rerolls > 0 {
             run.rerolls += hub_state.extra_rerolls;
         }
@@ -1414,6 +1897,7 @@ fn embark_expedition(
         hub_state.show_talents = false;
         hub_state.rested_buff = false;
         hub_state.sayge_fortune = None;
+        hub_state.sayge_glyph = None;
         hub_state.extra_rerolls = 0;
 
         next.set(Phase::Playing);
@@ -1427,12 +1911,18 @@ mod tests {
 
     #[test]
     fn test_hub_npc_properties() {
-        assert_eq!(HubNpcKind::Innkeeper.name(), "Innkeeper Allison");
+        assert_eq!(HubNpcKind::Innkeeper.name(), "Tarn Oakhoof");
         assert_eq!(HubNpcKind::QuartermasterDurgan.display_id(), 4793);
-        assert_eq!(HubNpcKind::Sayge.name(), "Sayge <Darkmoon Faire>");
+        assert_eq!(HubNpcKind::Sayge.name(), "Sayge");
         assert_eq!(HubNpcKind::RunMaster.display_id(), 4363);
         assert_eq!(HubNpcKind::TargetDummy.name(), "Target Dummy");
         assert_eq!(HubNpcKind::EnchanterIlsa.name(), "Ilsa Runeweaver");
+        assert_eq!(HubNpcKind::Banker.name(), "Bixi Vaultbolt");
+        assert_eq!(HubNpcKind::Transmogrifier.name(), "Esmeralda Glimmerstitch");
+
+        for npc in HubNpcKind::ALL {
+            assert!(!npc.greeting_sound().is_empty());
+        }
     }
 
     #[test]
