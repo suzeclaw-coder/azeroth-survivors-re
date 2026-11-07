@@ -31,6 +31,9 @@
 /.probe-identity
 /GithubTailScale.md
 *.local.md
+/portplan.md
+/TavernPortPlan.md
+*portplan*.md
 
 # Profiling output: `--features bevy/trace_chrome` drops a multi-GB flame chart in the cwd, which
 # otherwise leaves the checkout "dirty".
