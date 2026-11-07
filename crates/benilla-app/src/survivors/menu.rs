@@ -53,6 +53,7 @@ pub(super) enum MenuAction {
     Upgrade(UpgradeKind),
     RefundUpgrades,
     OpenArmoryModal,
+    EnterHub,
 }
 
 /// On [`MenuRoot`] once the glue art is in and the screen is built.
@@ -295,9 +296,22 @@ pub(super) fn build_menu(
             bottom: Val::Px(30.0),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
+            column_gap: Val::Px(16.0),
+            flex_direction: FlexDirection::Row,
             ..default()
         })
         .with_children(|c| {
+            glue_button(
+                c,
+                &art,
+                f,
+                MenuAction::EnterHub,
+                "Tavern Hub [H]",
+                170.0,
+                60.0,
+                GlueBtnKind::Normal,
+                1.0,
+            );
             glue_button(
                 c,
                 &art,
@@ -1282,6 +1296,9 @@ pub(super) fn menu_clicks(
                 next.set(Phase::Playing);
             }
         }
+        MenuAction::EnterHub => {
+            next.set(Phase::Hub);
+        }
         MenuAction::Upgrade(kind) => {
             account.purchase_upgrade(kind);
         }
@@ -1412,6 +1429,7 @@ pub(super) fn refresh_menu_ui(
             MenuAction::Map(i) => selection.map == i,
             MenuAction::Randomize
             | MenuAction::Enter
+            | MenuAction::EnterHub
             | MenuAction::CycleDifficulty
             | MenuAction::CycleAffixes
             | MenuAction::ToggleHardcore
@@ -1425,7 +1443,7 @@ pub(super) fn refresh_menu_ui(
         }
         if let Some(mut disabled) = disabled {
             let off = match *action {
-                MenuAction::Enter => cur.is_none(),
+                MenuAction::Enter | MenuAction::EnterHub => cur.is_none(),
                 MenuAction::Upgrade(kind) => !account.can_purchase_upgrade(kind),
                 MenuAction::RefundUpgrades => account.upgrades == save::AccountUpgrades::default(),
                 _ => false,

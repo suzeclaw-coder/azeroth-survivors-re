@@ -251,6 +251,7 @@ pub(super) enum UiAction {
     PortalFinishRun,
     PortalEndlessMode,
     ToggleCharacterSheet,
+    GoToHub,
 }
 
 /// The colour a button returns to when not hovered.
@@ -1647,9 +1648,9 @@ pub(super) fn setup_hud(
                 ));
             });
             root.spawn((
-                edged_button(UiAction::MainMenu, BUTTON, GOLD),
+                edged_button(UiAction::GoToHub, BUTTON, Color::srgb(0.3, 0.7, 1.0)),
                 Node {
-                    width: Val::Px(260.0),
+                    width: Val::Px(280.0),
                     justify_content: JustifyContent::Center,
                     padding: UiRect::axes(Val::Px(20.0), Val::Px(11.0)),
                     margin: UiRect::top(Val::Px(8.0)),
@@ -1658,7 +1659,7 @@ pub(super) fn setup_hud(
                     ..default()
                 },
                 BoxShadow::new(
-                    Color::srgba(1.0, 0.7, 0.2, 0.35),
+                    Color::srgba(0.2, 0.6, 1.0, 0.35),
                     Val::Px(0.0),
                     Val::Px(0.0),
                     Val::Px(0.0),
@@ -1666,7 +1667,22 @@ pub(super) fn setup_hud(
                 ),
             ))
             .with_children(|b| {
-                b.spawn(text(f, "Play again", 22.0, GOLD));
+                b.spawn(text(f, "Safehouse [H]", 22.0, Color::srgb(0.75, 0.9, 1.0)));
+            });
+            root.spawn((
+                edged_button(UiAction::MainMenu, BUTTON, GOLD),
+                Node {
+                    width: Val::Px(280.0),
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
+                    margin: UiRect::top(Val::Px(4.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    ..default()
+                },
+            ))
+            .with_children(|b| {
+                b.spawn(text(f, "Character Select", 18.0, GOLD));
             });
             root.spawn((
                 button(UiAction::Quit, Color::NONE),
@@ -2157,6 +2173,7 @@ pub(super) fn buttons(
                 bg.0 = BUTTON_HOT;
                 match (*action, *phase.get()) {
                     (UiAction::Resume, Phase::Paused) => next.set(Phase::Playing),
+                    (UiAction::GoToHub, Phase::GameOver) => next.set(Phase::Hub),
                     (UiAction::MainMenu, Phase::Paused | Phase::GameOver) => next.set(Phase::Menu),
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
                         exit.write(AppExit::Success);
@@ -2220,6 +2237,9 @@ pub(super) fn keys(
             {
                 next.set(Phase::Playing);
             }
+            if keys.just_pressed(KeyCode::KeyH) {
+                next.set(Phase::Hub);
+            }
             if keys.just_pressed(KeyCode::KeyC) || keys.just_pressed(KeyCode::KeyB) {
                 run.vault.is_open = !run.vault.is_open;
                 run.version += 1;
@@ -2261,7 +2281,9 @@ pub(super) fn keys(
         Phase::LevelUp => {}
         Phase::PortalChoice | Phase::Hub => {}
         Phase::GameOver => {
-            if keys.just_pressed(KeyCode::Enter) || gp_start || gp_south {
+            if keys.just_pressed(KeyCode::KeyH) {
+                next.set(Phase::Hub);
+            } else if keys.just_pressed(KeyCode::Enter) || gp_start || gp_south {
                 next.set(Phase::Menu);
             }
         }

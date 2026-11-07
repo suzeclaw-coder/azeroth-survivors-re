@@ -240,12 +240,13 @@ pub(super) fn drive_hero(
         Ok((me, mut tf, mut mv, mut hm)) => {
             let dt = time.delta_secs();
             let mut dir = Vec3::ZERO;
+            let active = (*phase.get() == Phase::Playing || *phase.get() == Phase::Hub) && run.dead_t.is_none();
             if let Some(auto) = auto
                 .as_deref()
-                .filter(|_| *phase.get() == Phase::Playing && run.dead_t.is_none())
+                .filter(|_| active)
             {
                 dir = super::auto::steer(auto);
-            } else if *phase.get() == Phase::Playing && run.dead_t.is_none() {
+            } else if active {
                 if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
                     dir.z -= 1.0;
                 }
@@ -291,8 +292,7 @@ pub(super) fn drive_hero(
             // strafes as a player does; unlocked (or driven), he faces where he runs.
             let face = (rig.mode == CamMode::Fixed
                 && auto.is_none()
-                && *phase.get() == Phase::Playing
-                && run.dead_t.is_none())
+                && active)
             .then(|| aim.0.map(|a| flat(a - pos)))
             .flatten()
             .filter(|d| d.length() > 0.5)
@@ -326,7 +326,8 @@ pub(super) fn drive_hero(
                 mv.speed = 0.0;
                 mv.flags = 0;
             }
-            let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
+            let is_hub = *phase.get() == Phase::Hub;
+            let playing = (*phase.get() == Phase::Playing || is_hub) && run.dead_t.is_none();
             let gp_dash = gamepads.iter().any(|gp| {
                 gp.just_pressed(GamepadButton::RightTrigger2)
                     || gp.just_pressed(GamepadButton::East)
@@ -340,7 +341,7 @@ pub(super) fn drive_hero(
                 run.hearth_channel = None;
                 run.banner = Some(("Hearthstone Interrupted!".to_string(), 1.5));
             }
-            if playing && keys.just_pressed(KeyCode::KeyH) {
+            if *phase.get() == Phase::Playing && keys.just_pressed(KeyCode::KeyH) && run.dead_t.is_none() {
                 if run.hearth_channel.is_some() {
                     run.hearth_channel = None;
                     run.banner = Some(("Hearthstone Cancelled".to_string(), 1.2));
@@ -367,19 +368,23 @@ pub(super) fn drive_hero(
                 hm.air = 0.0;
                 hm.vy = 0.0;
             }
-            let map = selection.stage_def();
-            let center = arena(map);
+            let (center, leash) = if is_hub {
+                (super::hub::hub_center(), super::hub::HUB_LEASH)
+            } else {
+                let map = selection.stage_def();
+                (arena(map), map.leash)
+            };
             let off = flat(pos - center);
-            if off.length() > map.leash * 2.0 {
-                // Just entered another battleground: start at its centre.
+            if off.length() > leash * 2.0 {
+                // Just entered another battleground or hub: start at its centre.
                 pos = center;
-            } else if off.length() > map.leash {
-                let held = center + off.normalize() * map.leash;
+            } else if off.length() > leash {
+                let held = center + off.normalize() * leash;
                 pos.x = held.x;
                 pos.z = held.z;
             }
             let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
-            let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
+            let playing = (*phase.get() == Phase::Playing || is_hub) && run.dead_t.is_none();
             let gp_jump = gamepads
                 .iter()
                 .any(|gp| gp.just_pressed(GamepadButton::South));

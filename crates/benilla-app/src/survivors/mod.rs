@@ -86,6 +86,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<achievements::AchievementState>()
             .init_resource::<hazards::HazardState>()
             .init_resource::<hero::RangeRingSettings>()
+            .init_resource::<hub::HubState>()
             .add_message::<abilities::Hit>()
             .add_message::<enemies::Loot>()
             .add_plugins(fct::FctPlugin)
@@ -96,6 +97,7 @@ impl Plugin for SurvivorsPlugin {
                 (
                     hud::setup_hud,
                     sheet::setup_character_sheet,
+                    hub::setup_hub_ui,
                     save::load_account,
                 ),
             )
@@ -161,6 +163,31 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(
                 Update,
                 (enemies::reap_dead, enemies::still_gems).after(WorldStage::Input),
+            )
+            .add_systems(
+                Update,
+                (
+                    abilities::cast_abilities,
+                    abilities::tick_areas,
+                    abilities::apply_hits,
+                    skillshot::tick_skillshot,
+                    ultimates::tick_ultimates,
+                )
+                    .chain()
+                    .after(WorldStage::Input)
+                    .run_if(in_state(Phase::Hub)),
+            )
+            .add_systems(
+                Update,
+                (
+                    hub::tick_hub,
+                    hub::hub_input,
+                    hub::hub_ui_buttons,
+                    hub::refresh_hub_chrome,
+                    hub::refresh_hub_modals,
+                )
+                    .chain()
+                    .after(WorldStage::Input),
             )
             .add_systems(
                 Update,
@@ -239,7 +266,7 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
             .add_systems(OnEnter(Phase::PortalChoice), pause)
-            .add_systems(OnEnter(Phase::Hub), (unpause, hub::spawn_hub_npcs))
+            .add_systems(OnEnter(Phase::Hub), (unpause, hub::enter_hub))
             .add_systems(OnEnter(Phase::GameOver), (unpause, record_game_over))
             .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
         if let Some(auto) = auto::from_env() {
@@ -525,6 +552,7 @@ pub(super) struct Run {
     pub enchanter: enchanter::RunEnchanter,
     pub hearth_channel: Option<f32>,
     pub determination_stacks: u8,
+    pub sayge_fortune: Option<hub::SaygeFortune>,
 }
 
 impl Default for Run {
@@ -590,6 +618,7 @@ impl Default for Run {
             enchanter: enchanter::RunEnchanter::default(),
             hearth_channel: None,
             determination_stacks: 0,
+            sayge_fortune: None,
         }
     }
 }
@@ -736,6 +765,14 @@ impl Run {
             item.apply_to_stats(&mut s, self.class.id);
         }
         gear::apply_set_bonuses(&self.equipped, &mut s);
+
+        if let Some(fortune) = self.sayge_fortune {
+            match fortune {
+                hub::SaygeFortune::War => s.might *= 1.12,
+                hub::SaygeFortune::Turtle => s.armor += 0.20,
+                hub::SaygeFortune::Wind => s.speed *= 1.15,
+            }
+        }
 
         if self.determination_stacks > 0 {
             let det = self.determination_stacks as f32;

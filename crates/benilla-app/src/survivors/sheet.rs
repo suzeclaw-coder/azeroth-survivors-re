@@ -309,7 +309,7 @@ pub(super) fn refresh_character_sheet(
         return;
     }
 
-    let is_in_run = p != Phase::Menu && p != Phase::GameOver;
+    let is_in_run = p != Phase::Menu && p != Phase::GameOver && p != Phase::Hub;
 
     // -------------------------------------------------------------------------
     // 1. REFRESH EQUIPPED SLOTS (LEFT COLUMN)
@@ -704,7 +704,7 @@ pub(super) fn sheet_buttons(
     phase: Res<State<Phase>>,
     mut sounds: MessageWriter<GlueSound>,
 ) {
-    let is_in_run = *phase.get() != Phase::Menu && *phase.get() != Phase::GameOver;
+    let is_in_run = *phase.get() != Phase::Menu && *phase.get() != Phase::GameOver && *phase.get() != Phase::Hub;
 
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
