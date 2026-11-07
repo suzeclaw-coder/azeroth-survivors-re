@@ -32,8 +32,8 @@ pub const HUB_MAP_NAME: &'static str = "GM Island";
 /// WoW world coordinates for GM Island Camp and Cottage plaza (Kalimdor, Map 1).
 pub const HUB_CENTER_WOW: [f32; 3] = [16228.0, 16300.0, 16.5];
 
-/// Maximum leash radius in yards from the GM Island camp center.
-pub const HUB_LEASH: f32 = 65.0;
+/// Maximum leash radius in yards from the GM Island camp center (covers camp, tavern, stairs, and loft).
+pub const HUB_LEASH: f32 = 85.0;
 
 /// Center of the town hub in Bevy engine coordinates.
 pub fn hub_center() -> Vec3 {

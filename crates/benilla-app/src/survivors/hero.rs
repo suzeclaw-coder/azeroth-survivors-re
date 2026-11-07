@@ -1,5 +1,10 @@
 //! The hero: its body, WASD movement over the terrain, the top-down camera, and its health.
 
+use avian3d::character_controller::move_and_slide::{
+    MoveAndSlideConfig, MoveAndSlideHitResponse,
+};
+use avian3d::prelude::Collider;
+use benilla_world::collision::WorldCollision;
 use benilla_world::view::WorldCamera;
 use benilla_world::world_point::WorldPoint;
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
@@ -239,6 +244,7 @@ pub(super) fn drive_hero(
     rig: Res<CamRig>,
     aim: Res<AimPoint>,
     world: WorldPoint,
+    collide: WorldCollision,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<(Entity, &mut Transform, &mut MovementState, &mut Hero)>,
@@ -310,6 +316,23 @@ pub(super) fn drive_hero(
                 let target = Quat::from_rotation_y(yaw_toward(look));
                 tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
             }
+
+            // Player collision capsule for horizontal obstacles (walls, doorframes, railings, counters):
+            // Radius 0.35 yd, cylinder height 0.9 yd (total height 1.6 yd).
+            // Bottom of the capsule is raised 0.45 yd above pos.y to glide over stairs, door sills,
+            // and low curbs without catching, while stopping solidly against full-height walls and railings.
+            const STEP_CLEARANCE: f32 = 0.45;
+            const CAP_RADIUS: f32 = 0.35;
+            const CAP_CYLINDER: f32 = 0.9;
+            let capsule = Collider::capsule(CAP_RADIUS, CAP_CYLINDER);
+            let shape_center = |p: Vec3, air: f32| {
+                Vec3::new(
+                    p.x,
+                    (p.y - air) + STEP_CLEARANCE + CAP_RADIUS + CAP_CYLINDER * 0.5,
+                    p.z,
+                )
+            };
+
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
                 let mut speed = run.stats().speed * run.haste_mult();
@@ -321,7 +344,21 @@ pub(super) fn drive_hero(
                 if near_frozen {
                     speed *= 0.75;
                 }
-                pos += dir * speed * dt;
+
+                // Slide body horizontally along walls and obstacles
+                let horiz_vel = dir * speed;
+                let center_now = shape_center(pos, hm.air);
+                let out = collide.slide_body(
+                    &capsule,
+                    center_now,
+                    horiz_vel,
+                    time.delta(),
+                    &MoveAndSlideConfig::default(),
+                    |_| MoveAndSlideHitResponse::Accept,
+                );
+                pos.x = out.position.x;
+                pos.z = out.position.z;
+
                 mv.speed = speed;
                 mv.flags = match face {
                     Some(look) => gait(look, dir),
@@ -370,7 +407,13 @@ pub(super) fn drive_hero(
                     flat(tf.rotation * Vec3::NEG_Z).normalize_or(Vec3::NEG_Z)
                 };
                 tf.rotation = Quat::from_rotation_y(yaw_toward(dash_dir));
-                pos += dash_dir * 12.0;
+                let dash_disp = dash_dir * 12.0;
+                let center_now = shape_center(pos, hm.air);
+                let actual_disp = match collide.cast_body(&capsule, center_now, dash_disp, 0.05) {
+                    Some(hit) => dash_dir * (hit.distance - 0.15).max(0.0),
+                    None => dash_disp,
+                };
+                pos += actual_disp;
                 run.dash_cd = run.dash_max_cd;
                 run.iframe_t = 0.25;
                 fx.cast(me, 1604, &[me], None);
@@ -392,12 +435,30 @@ pub(super) fn drive_hero(
                 pos.x = held.x;
                 pos.z = held.z;
             }
-            let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
+
+            // 3D vertical floor and stairs resolution via WorldCollision raycast.
+            // Probing downward from chest height (pos.y - hm.air + 1.6) catches WMO stairs,
+            // tavern porches, second-floor boards, bridges, and outdoor terrain alike.
+            let base_y = pos.y - hm.air;
+            let origin = Vec3::new(pos.x, base_y + 1.6, pos.z);
+            let probed_ground = collide
+                .ray_body(origin, Dir3::NEG_Y, 7.6)
+                .filter(|h| h.normal.y >= 0.45)
+                .map(|h| origin.y - h.distance)
+                .or_else(|| world.terrain_height_under(pos));
+            let mut target_ground = probed_ground.unwrap_or(base_y);
+
+            // Prevent snapping upward more than step-up height (0.6 yd) in a single frame
+            // so the player cannot pop onto tables, bars, or roofs while walking.
+            if target_ground > base_y + 0.6 {
+                target_ground = base_y;
+            }
+
             let playing = (*phase.get() == Phase::Playing || is_hub) && run.dead_t.is_none();
             let gp_jump = gamepads
                 .iter()
                 .any(|gp| gp.just_pressed(GamepadButton::South));
-            // Space or Gamepad A hops: lift off the terrain, then gravity brings the hero back down.
+            // Space or Gamepad A hops: lift off the terrain/floor, then gravity brings the hero back down.
             if playing
                 && (keys.just_pressed(KeyCode::Space) || gp_jump)
                 && hm.vy == 0.0
@@ -405,6 +466,7 @@ pub(super) fn drive_hero(
             {
                 hm.vy = JUMP_SPEED;
             }
+
             if playing && (hm.vy != 0.0 || hm.air > 0.0) {
                 hm.vy -= GRAVITY * dt;
                 hm.air += hm.vy * dt;
@@ -412,11 +474,23 @@ pub(super) fn drive_hero(
                     hm.air = 0.0;
                     hm.vy = 0.0;
                 }
+                pos.y = target_ground + hm.air;
             } else {
-                hm.air = 0.0;
-                hm.vy = 0.0;
+                // Grounded movement: check if player walked off an elevated ledge (porch/balcony drop > 0.6 yd)
+                let drop = pos.y - target_ground;
+                if drop > 0.6 && playing {
+                    // Walked off into the air: smoothly fall down under gravity
+                    hm.air = drop;
+                    hm.vy = 0.0;
+                    pos.y = target_ground + hm.air;
+                } else {
+                    // Normal stepping over stairs, floors, or terrain
+                    hm.air = 0.0;
+                    hm.vy = 0.0;
+                    pos.y = target_ground;
+                }
             }
-            pos.y = ground + hm.air;
+
             // Feed the animation driver: `vertical_speed`'s sign and the `FALLING` flag are what
             // select the Jump (37/38) / Fall (40) animation (`creature_anim::select`).
             mv.vertical_speed = hm.vy;
@@ -471,6 +545,7 @@ pub(super) fn place_camera(
     keys: Res<ButtonInput<KeyCode>>,
     player: Res<crate::player::Player>,
     world: WorldPoint,
+    collide: WorldCollision,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
     mut last_phase: Local<Phase>,
@@ -571,8 +646,19 @@ pub(super) fn place_camera(
             }
         }
 
-        // Never under the ground or submerged in grass blades:
-        if let Some(h) = world.terrain_height_under(eye) {
+        // Camera obstruction trace: sweep sphere along boom from look to eye.
+        // Prevents camera boom from penetrating tavern ceilings, roofs, or interior walls.
+        let boom = eye - look;
+        if let Some(dist) = collide.cast_camera(look, boom, false) {
+            let safe_dist = (dist - 0.25).max(0.6);
+            eye = look + boom.normalize() * safe_dist;
+        }
+
+        // Never clip through floorboards or drop under terrain:
+        if let Some(floor) = collide.ray_body(Vec3::new(eye.x, eye.y + 1.0, eye.z), Dir3::NEG_Y, 3.0) {
+            let floor_y = eye.y + 1.0 - floor.distance;
+            eye.y = eye.y.max(floor_y + 0.4);
+        } else if let Some(h) = world.terrain_height_under(eye) {
             eye.y = eye.y.max(h + 1.1);
         }
         (eye, look)
