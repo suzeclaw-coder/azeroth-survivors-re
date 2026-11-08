@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use benilla_world::collision::WorldCollision;
 use super::data::{self, EnemyDef};
 use super::enemies::Enemy;
 use super::gear::{self, EquipSlot, ItemQuality};
@@ -354,6 +355,7 @@ pub(super) fn enter_hub(
     mut current_map: Option<ResMut<benilla_world::world_map::CurrentMap>>,
     rig: Option<ResMut<hero::CamRig>>,
     world: benilla_world::world_point::WorldPoint,
+    collide: WorldCollision,
     heroes: Query<Entity, With<Hero>>,
     existing_entities: Query<Entity, With<RunEntity>>,
     mut sounds: MessageWriter<GlueSound>,
@@ -373,7 +375,10 @@ pub(super) fn enter_hub(
 
     let center = hub_center();
     let mut hero_pos = center;
-    if let Some(h) = world.terrain_height_under(hero_pos) {
+    let probe_origin = hero_pos + Vec3::Y * 5.0;
+    if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 15.0).filter(|h| h.normal.y >= 0.45) {
+        hero_pos.y = probe_origin.y - hit.distance;
+    } else if let Some(h) = world.terrain_height_under(hero_pos) {
         hero_pos.y = hero_pos.y.max(h);
     }
 
@@ -427,7 +432,7 @@ pub(super) fn enter_hub(
     run.hp = run.stats().max_hp;
 
     // 6. Spawn all 6 Town Hub NPCs around the square
-    spawn_hub_npcs_internal(&mut commands, center, &world);
+    spawn_hub_npcs_internal(&mut commands, center, &world, &collide);
 
     // 7. Reset hub interaction flags
     hub_state.focused_npc = None;
@@ -468,10 +473,14 @@ fn spawn_hub_npcs_internal(
     commands: &mut Commands,
     center: Vec3,
     world: &benilla_world::world_point::WorldPoint,
+    collide: &WorldCollision,
 ) {
     for kind in HubNpcKind::ALL {
         let mut pos = center + kind.offset();
-        if let Some(h) = world.terrain_height_under(pos) {
+        let probe_origin = pos + Vec3::Y * 5.0;
+        if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 15.0).filter(|h| h.normal.y >= 0.45) {
+            pos.y = probe_origin.y - hit.distance;
+        } else if let Some(h) = world.terrain_height_under(pos) {
             pos.y = pos.y.max(h);
         }
 

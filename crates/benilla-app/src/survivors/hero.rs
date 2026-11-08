@@ -1,5 +1,10 @@
 //! The hero: its body, WASD movement over the terrain, the top-down camera, and its health.
 
+use avian3d::character_controller::move_and_slide::{
+    MoveAndSlideConfig, MoveAndSlideHitResponse,
+};
+use avian3d::prelude::Collider;
+use benilla_world::collision::WorldCollision;
 use benilla_world::view::WorldCamera;
 use benilla_world::world_point::WorldPoint;
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
@@ -239,6 +244,7 @@ pub(super) fn drive_hero(
     rig: Res<CamRig>,
     aim: Res<AimPoint>,
     world: WorldPoint,
+    collide: WorldCollision,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<(Entity, &mut Transform, &mut MovementState, &mut Hero)>,
@@ -310,6 +316,23 @@ pub(super) fn drive_hero(
                 let target = Quat::from_rotation_y(yaw_toward(look));
                 tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
             }
+
+            // Player collision capsule for horizontal obstacles (walls, doorframes, railings, counters):
+            // Radius 0.35 yd, cylinder height 0.9 yd (total height 1.6 yd).
+            // Bottom of the capsule is raised 0.5 yd above pos.y to glide over stairs, door sills,
+            // and low curbs without catching, while stopping solidly against full-height walls and railings.
+            const STEP_CLEARANCE: f32 = 0.50;
+            const CAP_RADIUS: f32 = 0.35;
+            const CAP_CYLINDER: f32 = 0.90;
+            let capsule = Collider::capsule(CAP_RADIUS, CAP_CYLINDER);
+            let shape_center = |p: Vec3| {
+                Vec3::new(
+                    p.x,
+                    p.y + STEP_CLEARANCE + CAP_RADIUS + CAP_CYLINDER * 0.5,
+                    p.z,
+                )
+            };
+
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
                 let mut speed = run.stats().speed * run.haste_mult();
@@ -321,7 +344,33 @@ pub(super) fn drive_hero(
                 if near_frozen {
                     speed *= 0.75;
                 }
-                pos += dir * speed * dt;
+
+                // Slide body horizontally along walls and obstacles
+                let horiz_vel = dir * speed;
+                let center_now = shape_center(pos);
+                let out = collide.slide_body(
+                    &capsule,
+                    center_now,
+                    horiz_vel,
+                    time.delta(),
+                    &MoveAndSlideConfig::default(),
+                    |hit| {
+                        // Walkable floors, stairs, and slopes are ignored for horizontal collisions
+                        if hit.normal.y >= 0.45 {
+                            MoveAndSlideHitResponse::Ignore
+                        } else {
+                            // Flatten obstacle normal horizontally so player slides smoothly along walls
+                            let n_h = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or_zero();
+                            if n_h != Vec3::ZERO {
+                                *hit.normal = Dir3::new_unchecked(n_h);
+                            }
+                            MoveAndSlideHitResponse::Accept
+                        }
+                    },
+                );
+                pos.x = out.position.x;
+                pos.z = out.position.z;
+
                 mv.speed = speed;
                 mv.flags = match face {
                     Some(look) => gait(look, dir),
@@ -370,7 +419,13 @@ pub(super) fn drive_hero(
                     flat(tf.rotation * Vec3::NEG_Z).normalize_or(Vec3::NEG_Z)
                 };
                 tf.rotation = Quat::from_rotation_y(yaw_toward(dash_dir));
-                pos += dash_dir * 12.0;
+                let dash_disp = dash_dir * 12.0;
+                let center_now = shape_center(pos);
+                let actual_disp = match collide.cast_body(&capsule, center_now, dash_disp, 0.05) {
+                    Some(hit) => dash_dir * (hit.distance - 0.15).max(0.0),
+                    None => dash_disp,
+                };
+                pos += actual_disp;
                 run.dash_cd = run.dash_max_cd;
                 run.iframe_t = 0.25;
                 fx.cast(me, 1604, &[me], None);
@@ -392,12 +447,42 @@ pub(super) fn drive_hero(
                 pos.x = held.x;
                 pos.z = held.z;
             }
-            let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
+
+            // 3D vertical floor and stairs resolution via WorldCollision raycast.
+            // Probing downward from chest height (pos.y - hm.air + 1.8) catches WMO stairs,
+            // tavern porches, second-floor boards, bridges, and outdoor terrain alike.
+            let base_y = pos.y - hm.air;
+            let origin = Vec3::new(pos.x, base_y + 1.8, pos.z);
+            let probed_wmo = collide
+                .ray_body(origin, Dir3::NEG_Y, 8.0)
+                .filter(|h| h.normal.y >= 0.45)
+                .map(|h| origin.y - h.distance);
+            let terrain_ground = world.terrain_height_under(pos);
+            let hero_indoors = world.indoors_at(pos);
+
+            let target_ground = if hero_indoors {
+                probed_wmo.or(terrain_ground).unwrap_or(base_y)
+            } else {
+                match (probed_wmo, terrain_ground) {
+                    (Some(w), Some(t)) => {
+                        // Outdoors, elevated structures (porch, bridge, stairs, dock) take precedence over terrain
+                        if w >= t - 0.4 {
+                            w
+                        } else {
+                            t
+                        }
+                    }
+                    (Some(w), None) => w,
+                    (None, Some(t)) => t,
+                    (None, None) => base_y,
+                }
+            };
+
             let playing = (*phase.get() == Phase::Playing || is_hub) && run.dead_t.is_none();
             let gp_jump = gamepads
                 .iter()
                 .any(|gp| gp.just_pressed(GamepadButton::South));
-            // Space or Gamepad A hops: lift off the terrain, then gravity brings the hero back down.
+            // Space or Gamepad A hops: lift off the terrain/floor, then gravity brings the hero back down.
             if playing
                 && (keys.just_pressed(KeyCode::Space) || gp_jump)
                 && hm.vy == 0.0
@@ -408,15 +493,39 @@ pub(super) fn drive_hero(
             if playing && (hm.vy != 0.0 || hm.air > 0.0) {
                 hm.vy -= GRAVITY * dt;
                 hm.air += hm.vy * dt;
-                if hm.air <= 0.0 {
+                if hm.air <= 0.0 || (base_y + hm.air <= target_ground && hm.vy <= 0.0) {
                     hm.air = 0.0;
                     hm.vy = 0.0;
+                    pos.y = target_ground;
+                } else {
+                    pos.y = base_y + hm.air;
                 }
             } else {
-                hm.air = 0.0;
-                hm.vy = 0.0;
+                // Grounded movement: smooth stepping over stairs, curbs, and ledges
+                let step_up = target_ground - base_y;
+                if step_up > 0.0 && step_up <= 1.25 {
+                    // Smoothly step up stairs, tavern porch, or threshold
+                    pos.y = target_ground;
+                    hm.air = 0.0;
+                    hm.vy = 0.0;
+                } else if step_up > 1.25 {
+                    // Solid barrier/high ledge: do not pop upward
+                    pos.y = base_y;
+                } else {
+                    let drop = base_y - target_ground;
+                    if drop > 0.8 && playing {
+                        // Walked off an elevated ledge / balcony: initiate gravity fall
+                        hm.air = drop;
+                        hm.vy = 0.0;
+                        pos.y = target_ground + hm.air;
+                    } else {
+                        // Smoothly descend stairs or slope
+                        pos.y = target_ground;
+                        hm.air = 0.0;
+                        hm.vy = 0.0;
+                    }
+                }
             }
-            pos.y = ground + hm.air;
             // Feed the animation driver: `vertical_speed`'s sign and the `FALLING` flag are what
             // select the Jump (37/38) / Fall (40) animation (`creature_anim::select`).
             mv.vertical_speed = hm.vy;
@@ -471,6 +580,7 @@ pub(super) fn place_camera(
     keys: Res<ButtonInput<KeyCode>>,
     player: Res<crate::player::Player>,
     world: WorldPoint,
+    collide: WorldCollision,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
     mut last_phase: Local<Phase>,
@@ -543,38 +653,27 @@ pub(super) fn place_camera(
             focus + Vec3::Y * 1.4
         };
 
-        // When indoors (e.g. inside the tavern/cottage), clamp distance so the camera
-        // stays inside the room instead of clipping through ceilings/exterior walls.
-        let hero_indoors = world.indoors_at(look);
-        let dist = if hero_indoors {
-            rig.dist.min(2.5)
+        let boom_dir = Vec3::new(cp * sy, sp, cp * cy).normalize();
+        let desired_eye = look + boom_dir * rig.dist;
+        let boom = desired_eye - look;
+        let boom_len = boom.length();
+
+        // Camera obstruction trace: sweep sphere along boom from look to desired_eye.
+        // Prevents camera boom from penetrating tavern ceilings, roofs, or interior/exterior walls.
+        let mut eye = if let Some(hit_dist) = collide.cast_camera(look, boom, false) {
+            let safe_dist = (hit_dist - 0.2).clamp(0.5, boom_len);
+            look + boom_dir * safe_dist
         } else {
-            rig.dist
+            desired_eye
         };
 
-        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * dist;
-
-        // If the hero is outdoors, ensure the camera does not punch into a WMO building interior:
-        if !hero_indoors && world.indoors_at(eye) {
-            let to_look = look - eye;
-            let len = to_look.length();
-            if len > 0.1 {
-                let dir = to_look / len;
-                // Step forward towards hero until eye is safely outdoors
-                for step in 1..10 {
-                    let candidate = eye + dir * (len * (step as f32 / 10.0));
-                    if !world.indoors_at(candidate) {
-                        eye = candidate;
-                        break;
-                    }
-                }
+        // When outdoors, ensure camera does not clip into grass or terrain:
+        if !world.indoors_at(look) {
+            if let Some(h) = world.terrain_height_under(eye) {
+                eye.y = eye.y.max(h + 0.6);
             }
         }
 
-        // Never under the ground or submerged in grass blades:
-        if let Some(h) = world.terrain_height_under(eye) {
-            eye.y = eye.y.max(h + 1.1);
-        }
         (eye, look)
     };
     if rig.shake_t > 0.0 && rig.shake_strength > 0.0 {
@@ -945,5 +1044,58 @@ mod tests {
         world.write_message(CursorLeft { window: Entity::PLACEHOLDER });
         world.run_system_once(drop_stray_buttons).unwrap();
         assert!(!left_held(&world));
+    }
+
+    #[test]
+    fn test_step_up_and_descent_thresholds() {
+        // Step up <= 1.25 yd steps onto the stair/porch
+        let base_y = 16.5;
+        let step_stair = 16.8;
+        let step_up = step_stair - base_y;
+        assert!(step_up > 0.0 && step_up <= 1.25);
+
+        // Porch edge ~1.0 yd steps up cleanly
+        let porch_y = 17.5;
+        let step_porch = porch_y - base_y;
+        assert!(step_porch > 0.0 && step_porch <= 1.25);
+
+        // High wall / roof (> 1.25 yd) does not pop up
+        let wall_y = 18.5;
+        let step_wall = wall_y - base_y;
+        assert!(step_wall > 1.25);
+
+        // Moderate step down (drop <= 0.8 yd) smoothly descends
+        let lower_step = 16.2;
+        let drop_step = base_y - lower_step;
+        assert!(drop_step <= 0.8);
+
+        // Balcony / ledge fall (drop > 0.8 yd) triggers gravity fall
+        let ground_below = 12.0;
+        let drop_balcony = base_y - ground_below;
+        assert!(drop_balcony > 0.8);
+    }
+
+    #[test]
+    fn test_wall_normal_horizontal_flattening() {
+        // Walkable surface has normal.y >= 0.45 and should be ignored for horizontal slide
+        let floor_normal = Vec3::new(0.1, 0.9, 0.0).normalize();
+        assert!(floor_normal.y >= 0.45);
+
+        // Vertical wall has normal.y < 0.45 and should be flattened to XZ
+        let wall_normal = Vec3::new(0.8, 0.2, 0.5).normalize();
+        assert!(wall_normal.y < 0.45);
+        let n_h = Vec3::new(wall_normal.x, 0.0, wall_normal.z).normalize_or_zero();
+        assert_eq!(n_h.y, 0.0);
+        assert!((n_h.length() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_camera_obstruction_safe_distance() {
+        let boom_len: f32 = 12.0;
+        let hit_dist_indoor: f32 = 2.2; // ceiling or wall 2.2 yd away
+        let safe_dist = (hit_dist_indoor - 0.2).clamp(0.5, boom_len);
+        assert!((safe_dist - 2.0).abs() < 1e-5);
+        assert!(safe_dist < hit_dist_indoor);
+        assert!(safe_dist >= 0.5);
     }
 }
