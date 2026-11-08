@@ -36,9 +36,12 @@ const GRAVITY: f32 = 19.291_105;
 
 /// Radians of orbit per raw mouse unit while right-dragging.
 const ORBIT_RATE: f32 = 0.008;
-/// Elevation clamp (radians): ~10°..~83° above the horizon, so the camera never dives underground.
+/// Elevation clamp (radians): ~10°..~83° above the horizon, so the combat camera never dives underground.
 const PITCH_MIN: f32 = 0.18;
 const PITCH_MAX: f32 = 1.45;
+/// Orbit and Town Hub elevation clamp: allows negative pitch (~ -66° below horizon) so the camera
+/// can tilt upward to frame the staircase, second-floor loft, chandeliers, and high structures.
+const ORBIT_PITCH_MIN: f32 = -1.15;
 /// The locked view's tilt.
 pub(super) const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
 /// Town Hub 3rd-person eye-level RPG view tilt (~18° above horizon).
@@ -318,11 +321,11 @@ pub(super) fn drive_hero(
             }
 
             // Player collision capsule for horizontal obstacles (walls, doorframes, railings, counters):
-            // Radius 0.35 yd, cylinder height 0.9 yd (total height 1.6 yd).
-            // Bottom of the capsule is raised 0.5 yd above pos.y to glide over stairs, door sills,
-            // and low curbs without catching, while stopping solidly against full-height walls and railings.
-            const STEP_CLEARANCE: f32 = 0.50;
-            const CAP_RADIUS: f32 = 0.35;
+            // Radius 0.30 yd, cylinder height 0.9 yd (total height 1.5 yd).
+            // Bottom of the capsule is raised 0.45 yd above pos.y to glide over door sills and low curbs,
+            // while stopping solidly against full-height walls and railings.
+            const STEP_CLEARANCE: f32 = 0.45;
+            const CAP_RADIUS: f32 = 0.30;
             const CAP_CYLINDER: f32 = 0.90;
             let capsule = Collider::capsule(CAP_RADIUS, CAP_CYLINDER);
             let shape_center = |p: Vec3| {
@@ -345,9 +348,21 @@ pub(super) fn drive_hero(
                     speed *= 0.75;
                 }
 
-                // Slide body horizontally along walls and obstacles
+                // Check ahead for stairs or elevated walkable surfaces.
+                // Probing ahead lets the collision capsule step up over stair risers, thresholds, and porches
+                // instead of catching on the vertical riser as a horizontal wall.
+                let advance = (speed * dt).max(0.35);
+                let probe_ahead = Vec3::new(pos.x + dir.x * advance, (pos.y - hm.air) + 1.8, pos.z + dir.z * advance);
+                let step_lift = collide
+                    .ray_body(probe_ahead, Dir3::NEG_Y, 8.0)
+                    .filter(|h| h.normal.y >= 0.45)
+                    .map(|h| (probe_ahead.y - h.distance) - (pos.y - hm.air))
+                    .filter(|&rise| rise > 0.0 && rise <= 1.25)
+                    .unwrap_or(0.0);
+
+                // Slide body horizontally along walls and obstacles, lifted if stepping onto stairs
                 let horiz_vel = dir * speed;
-                let center_now = shape_center(pos);
+                let center_now = shape_center(pos + Vec3::Y * step_lift);
                 let out = collide.slide_body(
                     &capsule,
                     center_now,
@@ -420,7 +435,14 @@ pub(super) fn drive_hero(
                 };
                 tf.rotation = Quat::from_rotation_y(yaw_toward(dash_dir));
                 let dash_disp = dash_dir * 12.0;
-                let center_now = shape_center(pos);
+                let probe_dash = Vec3::new(pos.x + dash_dir.x * 0.5, (pos.y - hm.air) + 1.8, pos.z + dash_dir.z * 0.5);
+                let dash_lift = collide
+                    .ray_body(probe_dash, Dir3::NEG_Y, 8.0)
+                    .filter(|h| h.normal.y >= 0.45)
+                    .map(|h| (probe_dash.y - h.distance) - (pos.y - hm.air))
+                    .filter(|&rise| rise > 0.0 && rise <= 1.25)
+                    .unwrap_or(0.0);
+                let center_now = shape_center(pos + Vec3::Y * dash_lift);
                 let actual_disp = match collide.cast_body(&capsule, center_now, dash_disp, 0.05) {
                     Some(hit) => dash_dir * (hit.distance - 0.15).max(0.0),
                     None => dash_disp,
@@ -638,13 +660,27 @@ pub(super) fn place_camera(
             focus + Vec3::Y * 1.1,
         )
     } else {
+        let (min_pitch, max_pitch) = if is_hub || rig.mode == CamMode::Orbit {
+            (ORBIT_PITCH_MIN, PITCH_MAX)
+        } else {
+            (PITCH_MIN, PITCH_MAX)
+        };
+
         // Unlocked or in Hub: mouse drag swings and tilts camera around the hero, as in WoW.
         if (rig.mode == CamMode::Orbit || is_hub)
             && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
         {
             rig.yaw -= motion.delta.x * ORBIT_RATE;
-            rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
+            rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(min_pitch, max_pitch);
         }
+        // Classic WoW keyboard tilt controls: PageUp looks up, PageDown looks down
+        if keys.pressed(KeyCode::PageUp) {
+            rig.pitch = (rig.pitch - 1.5 * dt).clamp(min_pitch, max_pitch);
+        }
+        if keys.pressed(KeyCode::PageDown) {
+            rig.pitch = (rig.pitch + 1.5 * dt).clamp(min_pitch, max_pitch);
+        }
+
         let (sy, cy) = rig.yaw.sin_cos();
         let (sp, cp) = rig.pitch.sin_cos();
         let look = if is_hub {
@@ -661,17 +697,18 @@ pub(super) fn place_camera(
         // Camera obstruction trace: sweep sphere along boom from look to desired_eye.
         // Prevents camera boom from penetrating tavern ceilings, roofs, or interior/exterior walls.
         let mut eye = if let Some(hit_dist) = collide.cast_camera(look, boom, false) {
-            let safe_dist = (hit_dist - 0.2).clamp(0.5, boom_len);
+            let safe_dist = (hit_dist - 0.15).max(0.1).min(boom_len);
             look + boom_dir * safe_dist
         } else {
             desired_eye
         };
 
-        // When outdoors, ensure camera does not clip into grass or terrain:
-        if !world.indoors_at(look) {
-            if let Some(h) = world.terrain_height_under(eye) {
-                eye.y = eye.y.max(h + 0.6);
-            }
+        // Floor and ground clearance: ensure camera never dips beneath indoor floorboards or outdoor terrain
+        if let Some(floor) = collide.ray_body(Vec3::new(eye.x, eye.y + 1.0, eye.z), Dir3::NEG_Y, 2.5).filter(|h| h.normal.y >= 0.45) {
+            let floor_y = eye.y + 1.0 - floor.distance;
+            eye.y = eye.y.max(floor_y + 0.35);
+        } else if let Some(h) = world.terrain_height_under(eye) {
+            eye.y = eye.y.max(h + 0.5);
         }
 
         (eye, look)
@@ -1093,9 +1130,51 @@ mod tests {
     fn test_camera_obstruction_safe_distance() {
         let boom_len: f32 = 12.0;
         let hit_dist_indoor: f32 = 2.2; // ceiling or wall 2.2 yd away
-        let safe_dist = (hit_dist_indoor - 0.2).clamp(0.5, boom_len);
-        assert!((safe_dist - 2.0).abs() < 1e-5);
+        let safe_dist = (hit_dist_indoor - 0.15).max(0.1).min(boom_len);
+        assert!((safe_dist - 2.05).abs() < 1e-5);
         assert!(safe_dist < hit_dist_indoor);
-        assert!(safe_dist >= 0.5);
+
+        // Near-obstacle distance does not punch past geometry:
+        let hit_dist_close: f32 = 0.25;
+        let safe_close = (hit_dist_close - 0.15).max(0.1).min(boom_len);
+        assert!(safe_close < hit_dist_close);
+        assert!(safe_close >= 0.1);
+    }
+
+    #[test]
+    fn test_orbit_pitch_range_allows_looking_up() {
+        // Orbit pitch minimum is negative so player can tilt upward to view stairs, loft, and ceilings
+        assert!(ORBIT_PITCH_MIN < 0.0);
+        // At negative pitch, boom_dir has negative Y, so eye is below look,
+        // which makes the camera aim upward toward look and beyond
+        let pitch = -0.5f32;
+        let (sp, cp) = pitch.sin_cos();
+        assert!(sp < 0.0);
+        assert!(cp > 0.0);
+        let look = Vec3::new(0.0, 18.0, 0.0);
+        let boom_dir = Vec3::new(0.0, sp, cp).normalize();
+        let eye = look + boom_dir * 4.0;
+        assert!(eye.y < look.y); // Eye is lower than look, aiming UP
+    }
+
+    #[test]
+    fn test_stair_step_lift_ahead() {
+        let base_y = 16.5;
+        let stair_ground = 16.75;
+        let rise = stair_ground - base_y;
+        let step_lift = if rise > 0.0 && rise <= 1.25 { rise } else { 0.0 };
+        assert_eq!(step_lift, 0.25);
+
+        // Flat ground gives 0 lift
+        let flat_ground = 16.5;
+        let flat_rise = flat_ground - base_y;
+        let flat_lift = if flat_rise > 0.0 && flat_rise <= 1.25 { flat_rise } else { 0.0 };
+        assert_eq!(flat_lift, 0.0);
+
+        // High wall (> 1.25 yd) gives 0 lift
+        let wall_ground = 18.5;
+        let wall_rise = wall_ground - base_y;
+        let wall_lift = if wall_rise > 0.0 && wall_rise <= 1.25 { wall_rise } else { 0.0 };
+        assert_eq!(wall_lift, 0.0);
     }
 }
