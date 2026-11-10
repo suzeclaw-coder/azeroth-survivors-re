@@ -94,28 +94,36 @@ impl HubNpcKind {
 
     pub fn display_id(&self) -> u32 {
         match self {
-            Self::Innkeeper => 3060,
-            Self::QuartermasterDurgan => 4793,
+            Self::Innkeeper => 2106,
+            Self::QuartermasterDurgan => 312,
             Self::Sayge => 14856,
-            Self::RunMaster => 4363,
-            Self::TargetDummy => 2054,
-            Self::EnchanterIlsa => 10045,
-            Self::Banker => 5174,
-            Self::Transmogrifier => 1214,
+            Self::RunMaster => 7172,
+            Self::TargetDummy => 3019,
+            Self::EnchanterIlsa => 176,
+            Self::Banker => 3120,
+            Self::Transmogrifier => 3344,
         }
     }
 
     /// Offset from `hub_center()` in yards.
     pub fn offset(&self) -> Vec3 {
         match self {
-            Self::Innkeeper => Vec3::new(-4.0, 0.0, 5.0),
-            Self::QuartermasterDurgan => Vec3::new(8.0, 0.0, 3.0),
-            Self::Sayge => Vec3::new(-8.0, 0.0, -6.0),
-            Self::RunMaster => Vec3::new(6.0, 0.0, -8.0),
-            Self::TargetDummy => Vec3::new(12.0, 0.0, -4.0),
-            Self::EnchanterIlsa => Vec3::new(4.0, 0.0, 7.0),
-            Self::Banker => Vec3::new(-6.0, 0.0, 2.0),
-            Self::Transmogrifier => Vec3::new(-2.0, 0.0, 8.0),
+            // Inside GM Island Tavern (Inn Cottage) at counter/hearth:
+            Self::Innkeeper => Vec3::new(-15.0, 4.35, -24.0),
+            // Inside GM Island Tavern at expedition table:
+            Self::RunMaster => Vec3::new(-17.0, 4.35, -19.0),
+            // Outdoor forge/anvils beside tavern porch:
+            Self::QuartermasterDurgan => Vec3::new(-8.0, 0.0, -10.0),
+            // Darkmoon fortune tent:
+            Self::Sayge => Vec3::new(6.0, 0.0, -5.0),
+            // Training yard:
+            Self::TargetDummy => Vec3::new(14.0, 0.0, -10.0),
+            // Arcane lectern:
+            Self::EnchanterIlsa => Vec3::new(4.0, 0.0, 8.0),
+            // Extraction vault safe:
+            Self::Banker => Vec3::new(-4.0, 0.5, -14.0),
+            // Wardrobe mirror:
+            Self::Transmogrifier => Vec3::new(-6.0, 0.0, 6.0),
         }
     }
 
@@ -197,7 +205,7 @@ pub struct HubState {
 
 static TARGET_DUMMY_DEF: EnemyDef = EnemyDef {
     name: "Target Dummy",
-    display: 2054,
+    display: 3019,
     hp: 1_000_000.0,
     speed: 0.0,
     damage: 0.0,
@@ -477,8 +485,10 @@ fn spawn_hub_npcs_internal(
 ) {
     for kind in HubNpcKind::ALL {
         let mut pos = center + kind.offset();
-        let probe_origin = pos + Vec3::Y * 5.0;
-        if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 15.0).filter(|h| h.normal.y >= 0.45) {
+        // Probe downwards from chest/eye height (1.8 yd) down to floor/terrain (8.0 yd).
+        // Indoor NPCs start inside the tavern room beneath the ceiling, snapping cleanly to the floorboards.
+        let probe_origin = Vec3::new(pos.x, pos.y + 1.8, pos.z);
+        if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 8.0).filter(|h| h.normal.y >= 0.45) {
             pos.y = probe_origin.y - hit.distance;
         } else if let Some(h) = world.terrain_height_under(pos) {
             pos.y = pos.y.max(h);
@@ -546,7 +556,14 @@ fn spawn_hub_npcs_internal(
             ));
 
             // Secondary Training Dummy (Cleave / AoE Testing)
-            let cleave_pos = pos + Vec3::new(2.4, 0.0, 0.0);
+            let mut cleave_pos = pos + Vec3::new(2.4, 0.0, 0.0);
+            let cleave_probe = Vec3::new(cleave_pos.x, cleave_pos.y + 1.8, cleave_pos.z);
+            if let Some(hit) = collide.ray_body(cleave_probe, Dir3::NEG_Y, 8.0).filter(|h| h.normal.y >= 0.45) {
+                cleave_pos.y = cleave_probe.y - hit.distance;
+            } else if let Some(h) = world.terrain_height_under(cleave_pos) {
+                cleave_pos.y = cleave_pos.y.max(h);
+            }
+
             let e2 = units::spawn_unit(
                 commands,
                 &UnitSpec {
@@ -643,12 +660,21 @@ pub(super) fn tick_hub(
     // Detect closest NPC within 4.5 yards interaction range
     let mut closest_npc = None;
     let mut min_dist = 4.5;
+    let mut open_npc_dist = None;
+    let mut innkeeper_dist = None;
 
     for (&kind, mut npc_tf) in &mut npcs {
         let dist = flat(npc_tf.translation - hero_pos).length();
         if dist < min_dist {
             min_dist = dist;
             closest_npc = Some(kind);
+        }
+
+        if Some(kind) == hub_state.open_dialog {
+            open_npc_dist = Some(dist);
+        }
+        if kind == HubNpcKind::Innkeeper {
+            innkeeper_dist = Some(dist);
         }
 
         // Smoothly turn NPC toward the player if nearby (except target dummy)
@@ -663,6 +689,18 @@ pub(super) fn tick_hub(
 
     if hub_state.focused_npc != closest_npc {
         hub_state.focused_npc = closest_npc;
+        hub_state.version += 1;
+    }
+
+    // Leash dialogue window: close if player walks beyond 5.5 yards
+    if hub_state.open_dialog.is_some() && open_npc_dist.map_or(true, |d| d > 5.5) {
+        hub_state.open_dialog = None;
+        hub_state.version += 1;
+    }
+
+    // Leash talent panel to Innkeeper Tarn Oakhoof: close if player walks beyond 5.5 yards
+    if hub_state.show_talents && innkeeper_dist.map_or(true, |d| d > 5.5) {
+        hub_state.show_talents = false;
         hub_state.version += 1;
     }
 }
@@ -797,14 +835,6 @@ pub(super) fn setup_hub_ui(mut commands: Commands, asset_server: Res<AssetServer
                     btns.spawn(hub_btn(HubAction::OpenArmory, 95.0, 28.0))
                         .with_children(|b| {
                             b.spawn(hub_txt(f, "Armory [C]", 11.0, GOLD));
-                        });
-                    btns.spawn(hub_btn(HubAction::OpenTalents, 80.0, 28.0))
-                        .with_children(|b| {
-                            b.spawn(hub_txt(f, "Talents", 11.0, GOLD));
-                        });
-                    btns.spawn(hub_btn(HubAction::OpenExpedition, 100.0, 28.0))
-                        .with_children(|b| {
-                            b.spawn(hub_txt(f, "Expedition", 11.0, GREEN));
                         });
                     btns.spawn(hub_btn(HubAction::ReturnToCampfire, 110.0, 28.0))
                         .with_children(|b| {
@@ -1921,13 +1951,19 @@ mod tests {
     #[test]
     fn test_hub_npc_properties() {
         assert_eq!(HubNpcKind::Innkeeper.name(), "Tarn Oakhoof");
-        assert_eq!(HubNpcKind::QuartermasterDurgan.display_id(), 4793);
+        assert_eq!(HubNpcKind::Innkeeper.display_id(), 2106);
+        assert_eq!(HubNpcKind::QuartermasterDurgan.display_id(), 312);
         assert_eq!(HubNpcKind::Sayge.name(), "Sayge");
-        assert_eq!(HubNpcKind::RunMaster.display_id(), 4363);
+        assert_eq!(HubNpcKind::Sayge.display_id(), 14856);
+        assert_eq!(HubNpcKind::RunMaster.display_id(), 7172);
         assert_eq!(HubNpcKind::TargetDummy.name(), "Target Dummy");
+        assert_eq!(HubNpcKind::TargetDummy.display_id(), 3019);
         assert_eq!(HubNpcKind::EnchanterIlsa.name(), "Ilsa Runeweaver");
+        assert_eq!(HubNpcKind::EnchanterIlsa.display_id(), 176);
         assert_eq!(HubNpcKind::Banker.name(), "Bixi Vaultbolt");
+        assert_eq!(HubNpcKind::Banker.display_id(), 3120);
         assert_eq!(HubNpcKind::Transmogrifier.name(), "Esmeralda Glimmerstitch");
+        assert_eq!(HubNpcKind::Transmogrifier.display_id(), 3344);
 
         for npc in HubNpcKind::ALL {
             assert!(!npc.greeting_sound().is_empty());

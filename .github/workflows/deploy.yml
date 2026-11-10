@@ -46,6 +46,9 @@ jobs:
             exit 1
           fi
 
+      - name: Run Survivor Unit Tests
+        run: cargo test -p benilla-app --lib survivors
+
       - name: Setup WebAssembly toolchain
         run: scripts/web-setup.sh
 
