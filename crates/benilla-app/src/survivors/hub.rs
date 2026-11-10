@@ -30,8 +30,8 @@ pub const HUB_MAP_ID: u32 = 1;
 /// Map name that contains the 3D tavern hub.
 pub const HUB_MAP_NAME: &'static str = "GM Island";
 
-/// WoW world coordinates for GM Island Camp and Cottage plaza (Kalimdor, Map 1).
-pub const HUB_CENTER_WOW: [f32; 3] = [16228.0, 16300.0, 16.5];
+/// WoW world coordinates for GM Island Tavern Interior Hall (Kalimdor, Map 1, Group 0 of guildhousea.wmo).
+pub const HUB_CENTER_WOW: [f32; 3] = [16240.0, 16302.0, 20.85];
 
 /// Maximum leash radius in yards from the GM Island camp center (covers camp, tavern, stairs, and loft).
 pub const HUB_LEASH: f32 = 85.0;
@@ -105,25 +105,25 @@ impl HubNpcKind {
         }
     }
 
-    /// Offset from `hub_center()` in yards.
+    /// Offset from `hub_center()` in yards (all stationed inside the Tavern Hall).
     pub fn offset(&self) -> Vec3 {
         match self {
-            // Inside GM Island Tavern (Inn Cottage) at counter/hearth:
-            Self::Innkeeper => Vec3::new(-15.0, 4.35, -24.0),
-            // Inside GM Island Tavern at expedition table:
-            Self::RunMaster => Vec3::new(-17.0, 4.35, -19.0),
-            // Outdoor forge/anvils beside tavern porch:
-            Self::QuartermasterDurgan => Vec3::new(-8.0, 0.0, -10.0),
-            // Darkmoon fortune tent:
-            Self::Sayge => Vec3::new(6.0, 0.0, -5.0),
-            // Training yard:
-            Self::TargetDummy => Vec3::new(14.0, 0.0, -10.0),
-            // Arcane lectern:
-            Self::EnchanterIlsa => Vec3::new(4.0, 0.0, 8.0),
-            // Extraction vault safe:
-            Self::Banker => Vec3::new(-4.0, 0.5, -14.0),
-            // Wardrobe mirror:
-            Self::Transmogrifier => Vec3::new(-6.0, 0.0, 6.0),
+            // Innkeeper Tarn Oakhoof behind the bar counter with mugs and plates:
+            Self::Innkeeper => Vec3::new(-3.0, 0.0, -4.5),
+            // Run Master Gizzik Bonkwhistle at the expedition table beside the bar:
+            Self::RunMaster => Vec3::new(-5.0, 0.0, -1.0),
+            // Quartermaster Durgan Ironbelly by the weapon rack and armory anvil:
+            Self::QuartermasterDurgan => Vec3::new(5.5, 0.0, -6.0),
+            // Target Dummy in the sparring corner beside the armory weapon rack:
+            Self::TargetDummy => Vec3::new(7.0, 0.0, -1.0),
+            // Enchanter Ilsa by the mystic abbey bookshelves:
+            Self::EnchanterIlsa => Vec3::new(-6.0, 0.0, -14.0),
+            // Transmogrifier Esmeralda by the wardrobe mirror and rug racks:
+            Self::Transmogrifier => Vec3::new(5.0, 0.0, -12.0),
+            // Banker Bixi Vaultbolt by the extraction vault crates and barrels:
+            Self::Banker => Vec3::new(8.0, 0.0, 7.0),
+            // Sayge fortune teller by the warm chandelier hearth alcove:
+            Self::Sayge => Vec3::new(-2.0, 0.0, 9.0),
         }
     }
 
@@ -383,11 +383,11 @@ pub(super) fn enter_hub(
 
     let center = hub_center();
     let mut hero_pos = center;
-    let probe_origin = hero_pos + Vec3::Y * 5.0;
-    if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 15.0).filter(|h| h.normal.y >= 0.45) {
+    let probe_origin = hero_pos + Vec3::Y * 1.5;
+    if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 4.0).filter(|h| h.normal.y >= 0.45) {
         hero_pos.y = probe_origin.y - hit.distance;
-    } else if let Some(h) = world.terrain_height_under(hero_pos) {
-        hero_pos.y = hero_pos.y.max(h);
+    } else {
+        hero_pos.y = center.y;
     }
 
     // 3. Anchor world streaming & camera to GM Island Camp
@@ -485,13 +485,13 @@ fn spawn_hub_npcs_internal(
 ) {
     for kind in HubNpcKind::ALL {
         let mut pos = center + kind.offset();
-        // Probe downwards from chest/eye height (1.8 yd) down to floor/terrain (8.0 yd).
+        // Probe downwards from chest/eye height (1.5 yd) down to floorboards (4.0 yd).
         // Indoor NPCs start inside the tavern room beneath the ceiling, snapping cleanly to the floorboards.
-        let probe_origin = Vec3::new(pos.x, pos.y + 1.8, pos.z);
-        if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 8.0).filter(|h| h.normal.y >= 0.45) {
+        let probe_origin = Vec3::new(pos.x, pos.y + 1.5, pos.z);
+        if let Some(hit) = collide.ray_body(probe_origin, Dir3::NEG_Y, 4.0).filter(|h| h.normal.y >= 0.45) {
             pos.y = probe_origin.y - hit.distance;
-        } else if let Some(h) = world.terrain_height_under(pos) {
-            pos.y = pos.y.max(h);
+        } else {
+            pos.y = center.y;
         }
 
         let to_center = flat(center - pos);
@@ -1947,6 +1947,19 @@ fn embark_expedition(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hub_center_and_npcs_inside_tavern() {
+        let center = hub_center();
+        assert!((center.y - 20.85).abs() < 0.1);
+        for kind in HubNpcKind::ALL {
+            let pos = center + kind.offset();
+            // Bevy X must be within Tavern Hall Group 0 bounds [-16319, -16281]
+            assert!(pos.x >= -16319.0 && pos.x <= -16281.0, "{:?} X out of bounds: {}", kind, pos.x);
+            // Bevy Z must be within Tavern Hall Group 0 bounds [-16258, -16221]
+            assert!(pos.z >= -16258.0 && pos.z <= -16221.0, "{:?} Z out of bounds: {}", kind, pos.z);
+        }
+    }
 
     #[test]
     fn test_hub_npc_properties() {
